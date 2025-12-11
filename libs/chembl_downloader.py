@@ -39,7 +39,7 @@ JOIN assays ass ON act.assay_id = ass.assay_id
 JOIN target_dictionary trg ON ass.tid = trg.tid
 WHERE trg.organism = 'Homo sapiens'
     AND act.standard_value IS NOT NULL
-LIMIT 4000000
+LIMIT 2000000 -- hard limit dla mojego WSLa
 """
 
 polars_schema = {
@@ -74,10 +74,10 @@ polars_schema = {
 }
 
 def extract_chembl_from_sqlite():
-    print("Nawiązywanie połączenia z bazą SQLite...")
+    print("DEBUG: Nawiązywanie połączenia z bazą SQLite...")
     conn = sqlite3.connect(DB_PATH)
 
-    print("Wykonywanie zapytania i ładowanie do Polars (to może chwilę potrwać)...")
+    print("DEBUG: Wykonywanie zapytania i ładowanie do Polars (to może chwilę potrwać)...")
 
 
     df = pl.read_database(query, connection=conn, schema_overrides=polars_schema)
@@ -91,4 +91,4 @@ if __name__ == "__main__":
 
     print(f"Pobrano {df.height} rekordów.")
     print(df.head())
-    df.write_parquet("chembl_human_activities.parquet")
+    df.write_parquet("chembl_human_activities.parquet", compression="brotli")
