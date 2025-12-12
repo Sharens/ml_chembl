@@ -14,6 +14,9 @@ chembl_schema = {
     "rtb": pl.UInt8,                   # Wiązania rotacyjne (mała liczba całkowita)
     "aromatic_rings": pl.UInt8,        # Pierścienie aromatyczne (mała liczba całkowita)
     "qed_weighted": pl.Float32,        # QED (pojedyncza precyzja)
+    "standard_value": pl.Float32,
+    "standard_units": pl.String,
+    "standard_type": pl.String,
     "pchembl_value": pl.Float32,       # Wartość pChEMBL (pojedyncza precyzja)
     "target_chembl_id": pl.String,     # ID celu (tekst)
     "target_name": pl.String           # Nazwa celu (tekst)
