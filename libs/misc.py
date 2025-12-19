@@ -1,11 +1,10 @@
 import polars as pl
 import numpy as np
 from rdkit import Chem
-from rdkit.Chem import AllChem
 from tqdm import tqdm
 from torch_geometric.data import Data
 import torch
-from torch.utils.data import Dataset, DataLoader
+from torch.utils.data import Dataset
 from torch_geometric.loader import DataLoader as GeoDataLoader
 from torch_geometric.nn import GCNConv, global_mean_pool
 import torch.nn as nn
@@ -14,7 +13,6 @@ from rdkit.Chem import rdFingerprintGenerator
 from rdkit import Chem
 import numpy as np
 from tqdm import tqdm
-from torch_geometric.nn import GATConv
 
 
 def compute_pIC50(df: pl.DataFrame) -> pl.DataFrame:
@@ -145,7 +143,7 @@ def generate_fingerprints(smiles_list:list, radius:int=2, n_bits:int=1024)->tupl
     # Zwracamy jako float32, bo tego oczekuje PyTorch w warstwach Linear
     return np.array(fps, dtype=np.float32), valid_indices
 
-def smile_to_graph(smile:str, target_val:float)->Data:
+def smile_to_graph(smile:str, target_val:float)->Data | None:
     """
     Konwertuje pojedynczy ciąg SMILES na obiekt grafowy PyTorch Geometric (Data).
 
