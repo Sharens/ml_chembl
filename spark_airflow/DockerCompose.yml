@@ -10,7 +10,9 @@ services:
     hostname: spark-master
     networks:
       - spark-net
-
+    volumes:
+      - ../:/opt/workspace  # Mapuje cały katalog projektu ml_chembl do /opt/workspace w kontenerze
+  
   spark-worker-1:
     image: apache/spark:latest
     container_name: spark-worker-1

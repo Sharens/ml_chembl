@@ -10,9 +10,6 @@ from torch_geometric.nn import GCNConv, global_mean_pool
 import torch.nn as nn
 import torch.nn.functional as F
 from rdkit.Chem import rdFingerprintGenerator
-from rdkit import Chem
-import numpy as np
-from tqdm import tqdm
 
 
 def compute_pIC50(df: pl.DataFrame) -> pl.DataFrame:
