@@ -70,6 +70,10 @@ services:
       - spark-master
     networks:
       - spark-net
+    volumes:
+      - ./dags:/opt/airflow/dags  # Mapowanie folderu na skrypty (DAGi)
+      - ../:/opt/workspace        # Mapowanie Twojego kodu (ml_chembl)
+      - airflow_db:/opt/airflow   # To co już masz (baza danych)
 
 networks:
   spark-net:
