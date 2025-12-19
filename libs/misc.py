@@ -14,6 +14,7 @@ from rdkit.Chem import rdFingerprintGenerator
 from rdkit import Chem
 import numpy as np
 from tqdm import tqdm
+from torch_geometric.nn import GATConv
 
 
 def compute_pIC50(df: pl.DataFrame) -> pl.DataFrame:
@@ -173,39 +174,43 @@ def smile_to_graph(smile:str, target_val:float)->Data:
     if not mol:
         return None
 
-    # Cechy węzłów (Atomy) - uproszczone: tylko liczba atomowa (Atomic Num)
+    # Lista najważniejszych atomów w lekach
+    permitted_atoms = [5, 6, 7, 8, 9, 15, 16, 17, 35, 53] # B, C, N, O, F, P, S, Cl, Br, I
+    
     node_feats = []
     for atom in mol.GetAtoms():
-        node_feats.append(atom.GetAtomicNum())
+        # 1. Typ atomu (One-Hot, 10 + 1 "Other" = 11 cech)
+        atom_num = atom.GetAtomicNum()
+        atom_vec = [int(atom_num == x) for x in permitted_atoms]
+        atom_vec.append(int(atom_num not in permitted_atoms)) # "Other"
+        
+        # 2. Stopień węzła (Liczba sąsiadów)
+        degree = atom.GetDegree()
+        atom_vec.append(degree)
+        
+        # 3. Aromatyczność
+        atom_vec.append(int(atom.GetIsAromatic()))
+        
+        # Razem: 11 + 1 + 1 = 13 cech
+        node_feats.append(atom_vec)
     
-    x = torch.tensor(node_feats, dtype=torch.float).view(-1, 1)
+    x = torch.tensor(node_feats, dtype=torch.float) # PyTorch sam obsłuży shape (N, 13)
 
-    # Krawędzie (Wiązania)
     edge_indices = []
-    edge_attrs = []
     for bond in mol.GetBonds():
         i = bond.GetBeginAtomIdx()
         j = bond.GetEndAtomIdx()
-        
-        # Grafy są nieskierowane, dodajemy (i, j) oraz (j, i)
         edge_indices.append([i, j])
         edge_indices.append([j, i])
-        
-        # Typ wiązania jako cecha (1.0 = Single, 1.5 = Aromatic, 2.0 = Double, 3.0 = Triple)
-        b_type = bond.GetBondTypeAsDouble()
-        edge_attrs.append(b_type)
-        edge_attrs.append(b_type)
 
-    if not edge_indices: # Samotny atom bez wiązań
+    if not edge_indices:
         return None
 
     edge_index = torch.tensor(edge_indices, dtype=torch.long).t().contiguous()
-    edge_attr = torch.tensor(edge_attrs, dtype=torch.float).view(-1, 1)
-    
+    # GCNConv nie obsługuje edge_attr w najprostszej wersji, więc je pomijamy
     y = torch.tensor([target_val], dtype=torch.float)
 
-    return Data(x=x, edge_index=edge_index, edge_attr=edge_attr, y=y)
-
+    return Data(x=x, edge_index=edge_index, y=y)
 
 class MoleculeDatasetMLP(Dataset):
     """
