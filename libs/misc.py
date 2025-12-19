@@ -59,12 +59,12 @@ def impute_units(df: pl.DataFrame, value_col="standard_value", units_col="standa
 
     return df
 
-def load_and_clean_data(path):
+def load_and_clean_data(path, n_value, random_seed):
     print("Ładowanie i czyszczenie danych...")
     df = pl.scan_parquet(path)
     
     # 1. Pobierz próbkę (lub całość) i wykonaj operacje z Twojego notebooka
-    df = df.collect() # .sample(n=50000, seed=RANDOM_SEED) # Odkomentuj dla testów na mniejszej próbce
+    df = df.collect().sample(n=n_value, seed=random_seed) # Odkomentuj dla testów na mniejszej próbce
     df = impute_units(df)
     df = compute_pIC50(df)
     
