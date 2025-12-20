@@ -21,9 +21,13 @@ JOIN assays ass ON act.assay_id = ass.assay_id
 JOIN target_dictionary td ON ass.tid = td.tid
 JOIN compound_structures cs ON act.molregno = cs.molregno
 JOIN compound_properties cp ON act.molregno = cp.molregno
-WHERE td.organism = 'Homo sapiens' 
+WHERE td.organism = 'Homo sapiens'
+and td.chembl_id = 'CHEMBL203'
     AND act.pchembl_value IS NOT NULL    -- Musi istnieć wartość celu
     AND cs.canonical_smiles IS NOT NULL   -- Musimy mieć strukturę dla GNN
     AND (act.potential_duplicate IS NULL OR act.potential_duplicate = 0)
 LIMIT 2000000 -- mozna zmienic w zaleznosci od zasobów
 ;
+
+
+select * from target_dictionary trg where trg.chembl_id = 'CHEMBL203'
