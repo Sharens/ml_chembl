@@ -25,14 +25,12 @@ Quick start (recommended)
 ```bash
 source .venv/bin/activate
 ```
-
-2. From the project root (`/home/sharens/projects/python/ml_chembl`) run the whole pipeline (download + export):
-
+1. Run download + export:
 ```bash
 python -m data_fetcher
 ```
 
-3. Run only download (download + extract):
+1. Run only download (download + extract):
 
 ```bash
 python -m data_fetcher download
