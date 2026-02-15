@@ -76,7 +76,8 @@ class DataProcessor:
                 "standard_relation",
                 "pchembl_value",
                 "target_chembl_id", 
-                "target_name"       
+                "target_name",
+                "confidence_score"
             ])
         )
 
