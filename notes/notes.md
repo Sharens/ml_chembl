@@ -1,3 +1,6 @@
+## Główny cel modelu
+* Predykcja aktywnoci biologicznej poszczegolnych molekul
+
 ## Przetwarzanie danych (pIC50)
 
 Głównym celem jest ujednolicenie i oczyszczenie wartości powinowactwa chemicznego.
