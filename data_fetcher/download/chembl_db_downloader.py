@@ -39,20 +39,24 @@ class ChEMBLDownloader:
         logger.info("Download completed.")
     
     def extract(self) -> None:
-        """Extracts the SQLite database from the downloaded archive."""
         self.output_path.parent.mkdir(parents=True, exist_ok=True)
-        
         logger.info("Database extraction started.")
         
         try:
             with tarfile.open(self.archive_name, "r:gz") as tar:
-                with tqdm(total=tar.getmember(self.internal_path).size, unit='B', unit_scale=True, desc="Extracting") as pbar:
-                    for member in tar.getmembers():
-                        if member.name == self.internal_path:
-                            tar.extract(member, path=self.output_path.parent)
-                            break
-                        pbar.update(member.size)
-            
+                member = tar.getmember(self.internal_path)
+                
+                with tqdm(total=member.size, unit='B', unit_scale=True, desc="Extracting") as pbar:
+                    source = tar.extractfile(member)
+                    if source:
+                        with open(self.output_path, "wb") as target:
+                            while True:
+                                chunk = source.read(128 * 1024)
+                                if not chunk:
+                                    break
+                                target.write(chunk)
+                                pbar.update(len(chunk))
+                
             logger.info(f"Database saved to: {self.output_path}")
             self._cleanup()
         except KeyError:
