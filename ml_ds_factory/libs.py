@@ -1,20 +1,20 @@
-import sys
+import logging
 import os
-from pathlib import Path
-
+import polars as pl
+import sys
 from attr import dataclass
+from pathlib import Path
 
 project_root = '~/projects/python/ml_chembl'
 sys.path.append(os.path.expanduser(project_root))
-import logging
-import polars as pl
-from data_fetcher.config import CONFIG
 
+
+BASE_DIR = Path(__file__).resolve().parents[1]
 
 @dataclass 
 class Config:
 # Sciezka do plikow parquetowych
-    data_path: Path = Path("/home/sharens/projects/python/ml_chembl/data_fetcher/raw")
+    data_path: Path = BASE_DIR / "data_fetcher" / "raw"
 
 
 # Wczytywanie danych z plików Parquet
