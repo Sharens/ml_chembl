@@ -4,4 +4,4 @@ libs/chembl_36/chembl_36_sqlite/*
 *.csv
 __pycache__
 .venv
-*.parquet
+raw_*.parquet

@@ -12,3 +12,6 @@ httpx[http2]
 seaborn
 pyarrow
 scikit-learn
+Path
+connectorx
+adbc-driver-sqlite
