@@ -2,11 +2,10 @@ from data_fetcher.config import CONFIG
 from data_fetcher.database.connection import DatabaseConnection
 from data_fetcher.database.repository import TableRepository
 from pathlib import Path
-from pathlib import Path
 from typing import Set
 import logging
-import logging
 import polars as pl
+from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +27,7 @@ class ParquetExporter:
     
     def export_multiple_tables(self, repo, table_names: Set[str], row_limit: int) -> None:
         """Exports multiple tables from a repository."""
-        for table_name in table_names:
+        for table_name in tqdm(table_names, desc="Exporting tables to Parquet"):
             try:
                 df = repo.fetch_table_as_dataframe(table_name, row_limit)
                 self.export_dataframe(df, table_name)
