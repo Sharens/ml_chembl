@@ -7,11 +7,15 @@ from __future__ import annotations
 
 import argparse
 import logging
+import sys
 from pathlib import Path
 
 from data_fetcher.config import CONFIG
 
 logger = logging.getLogger(__name__)
+
+# Public API when imported from other scripts
+__all__ = ["main", "run_download", "run_export", "get_parser", "_setup_logging"]
 
 
 def _setup_logging(level: int = logging.INFO) -> None:
@@ -19,6 +23,24 @@ def _setup_logging(level: int = logging.INFO) -> None:
         level=level,
         format="# %(levelname)s - %(message)s",
     )
+
+
+def get_parser() -> argparse.ArgumentParser:
+    """Return an ArgumentParser configured like the CLI uses.
+
+    This lets other scripts import the parser, extend it, or reuse the
+    same arguments when embedding the CLI.
+    """
+    parser = argparse.ArgumentParser(description="Data fetcher orchestration CLI")
+    parser.add_argument(
+        "action",
+        nargs="?",
+        choices=["download", "export", "all"],
+        default="all",
+        help="Action to perform: download | export | all (default=all)",
+    )
+    parser.add_argument("--limit", type=int, default=None, help="Row limit for export (overrides config)")
+    return parser
 
 
 def run_download() -> None:
@@ -53,16 +75,7 @@ def run_export(limit: int | None = None) -> None:
 def main(argv: list[str] | None = None) -> int:
     _setup_logging()
 
-    parser = argparse.ArgumentParser(description="Data fetcher orchestration CLI")
-    parser.add_argument(
-        "action",
-        nargs="?",
-        choices=["download", "export", "all"],
-        default="all",
-        help="Action to perform: download | export | all (default=all)",
-    )
-    parser.add_argument("--limit", type=int, default=None, help="Row limit for export (overrides config)")
-
+    parser = get_parser()
     args = parser.parse_args(argv)
 
     try:
@@ -83,4 +96,4 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    sys.exit(main())

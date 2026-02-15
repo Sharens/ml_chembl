@@ -15,7 +15,8 @@ SELECT
     act.standard_type,
     act.pchembl_value,    -- pIC50 (już zlogarytmowane)
     td.chembl_id AS target_chembl_id,
-    td.pref_name AS target_name
+    td.pref_name AS target_name 
+    -- TODO: Dodac standard_relation
 FROM activities act
 JOIN assays ass ON act.assay_id = ass.assay_id
 JOIN target_dictionary td ON ass.tid = td.tid
@@ -27,3 +28,7 @@ WHERE td.organism = 'Homo sapiens'
     AND (act.potential_duplicate IS NULL OR act.potential_duplicate = 0)
 LIMIT 2000000 -- mozna zmienic w zaleznosci od zasobów
 ;
+
+
+-- TODO: TO SA DANE DLA DANEJ MOLEKULY
+-- TODO: Potrzebne sa dane dla kazdego atomu pokroju wegla do pobrania z RDKITa
