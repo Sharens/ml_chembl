@@ -11,4 +11,4 @@ tqdm==4.67.1
 httpx[http2]
 seaborn
 pyarrow
-pyarrow.parquet
+scikit-learn
