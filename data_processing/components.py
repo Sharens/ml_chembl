@@ -74,7 +74,9 @@ class DataLoader:
             WHERE LOWER(td.organism) = 'homo sapiens'
                 AND cs.canonical_smiles IS NOT NULL
                 AND (act.potential_duplicate IS NULL OR act.potential_duplicate = 0)
-                AND (act.pchembl_value IS NOT NULL OR act.standard_value IS NOT NULL);
+                AND (act.pchembl_value IS NOT NULL OR act.standard_value IS NOT NULL)
+            LIMIT 2000000
+            ;
         """
         
         logging.info("Fetching data from the SQLite database...")

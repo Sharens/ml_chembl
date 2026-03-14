@@ -16,3 +16,79 @@ Co dostarczyć?
 Notebook z kodem i wnioskami
 Lista finalnych cech z uzasadnieniem
 2-3 kluczowe spostrzeżenia z analizy
+
+---
+# Kontynuacja przedmiotu
+## Notatka: Budowa modeli baseline (Warsztaty SI)
+
+Celem zajęć jest stworzenie punktów odniesienia (baseline) dla regresji aktywności biologicznej ($IC_{50}$) związków chemicznych.
+
+---
+
+### 1. Model MLP (Multi-Layer Perceptron)
+
+Podejście klasyczne oparte na deskryptorach molekularnych.
+
+* **Dane wejściowe:** Formuły SMILES zamienione na **Morgan fingerprints** (przy użyciu RDKit).
+* **Architektura:** `nn.Sequential` (PyTorch).
+    * Trzy warstwy liniowe z aktywacją **ReLU** i warstwą **Dropout**.
+    * Przykładowy schemat: $2048 \to 512 \to 128 \to 1$.
+
+
+* **Konfiguracja:**
+    * **Loss:** MSE (Mean Squared Error).
+    * **Optymalizator:** Adam.
+    * **Do ustalenia:** Inicjalizacja wag oraz współczynnik uczenia (learning rate).
+
+
+
+---
+
+### 2. Model GNN (Graph Neural Network)
+
+Podejście grafowe, gdzie molekuła to graf: węzły (atomy) i krawędzie (wiązania).
+
+* **Cechy węzłów:** Numer atomowy, ładunek itp.
+* **Architektura:** 2-3 warstwy `GCNConv`.
+* Schemat: `GCNConv(in, 64) -> ReLU` $\to$ `GCNConv(64, 64) -> ReLU` $\to$ `GCNConv(64, 64) -> ReLU`.
+* **Agregacja:** `global_mean_pool` (przejście z poziomu atomów do poziomu całej molekuły).
+* **Linear Head:** `Linear(64, 32) -> ReLU` $\to$ `Linear(32, 1)`.
+
+
+* **Konfiguracja:** Optymalizator Adam, loss MSE.
+
+---
+
+### 3. Metodyka i Ewaluacja
+
+* **Podział danych (Splitting):**
+* Random split: 80/10/10.
+* **Scaffold split:** Podział oparty na rdzeniach strukturalnych (RDKit) – ważny dla sprawdzenia generalizacji modelu.
+
+
+* **Logika porównania:**
+1. Czy MLP jest lepsze od średniej (podejście naiwne)?
+2. Czy GNN (struktura grafu) daje lepsze wyniki niż MLP (fingerprinty)?
+
+
+* **Narzędzia:**
+* **MLflow:** Do zarządzania cyklem życia modelu i logowania wyników.
+
+
+* **Raportowanie:** Wyniki należy zebrać w tabeli:
+| Model | Typ Splitu | Funkcja Loss | $R^2$ |
+| :--- | :--- | :--- | :--- |
+| MLP | Random | MSE | ... |
+| GNN | Scaffold | ... | ... |
+
+---
+
+### Źródła i materiały:
+
+* Dokumentacja: [PyTorch Sequential](https://docs.pytorch.org/docs/stable/generated/torch.nn.Sequential.html), [PyTorch Geometric](https://pytorch-geometric.readthedocs.io/en/2.7.0/modules/nn.html).
+* Teoria GNN: [Distill.pub - Intro to GNN](https://distill.pub/2021/gnn-intro/).
+* Literatura: *Grafowe sieci neuronowe. Teoria i praktyka* (F. Wójcik, 2026).
+
+## Na następne zajęcia:
+- wytrenowane modele baseline'owe (MLP, GNN dla różnych splitów)
+- przygotowana tabela porównująca modele
