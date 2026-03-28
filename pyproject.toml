@@ -1,0 +1,39 @@
+[project]
+name = "ml_chembl"
+version = "0.0.1"
+description = "Machine learning helpers and data pipeline for ChEMBL data"
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "apache-airflow==3.1.7",
+    "attr==0.3.2",
+    "httpx==0.28.1",
+    "numpy==2.4.2",
+    "polars==1.35.2",
+    "pyspark==4.1.0",
+    "rdkit==2025.9.2",
+    "torch==2.9.1",
+    "torch_geometric==2.7.0",
+    "tqdm==4.67.1",
+    "httpx[http2]",
+    "seaborn",
+    "pyarrow",
+    "scikit-learn",
+    "Path",
+    "connectorx",
+    "adbc-driver-sqlite",
+    "statsmodels",
+    "mlflow",
+    "pandas>=2.3.3",
+]
+
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.uv]
+# Project-specific uv settings can go here. See: https://docs.astral.sh/uv/reference/settings/
+
+[tool.setuptools.packages.find]
+include = ["data_fetcher*"]
+

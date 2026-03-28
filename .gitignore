@@ -5,3 +5,7 @@ libs/chembl_36/chembl_36_sqlite/*
 __pycache__
 .venv
 raw_*.parquet
+.github/instructions
+.vscode
+ml_chembl.*
+mlruns

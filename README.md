@@ -92,3 +92,54 @@ Podejście grafowe, gdzie molekuła to graf: węzły (atomy) i krawędzie (wiąz
 ## Na następne zajęcia:
 - wytrenowane modele baseline'owe (MLP, GNN dla różnych splitów)
 - przygotowana tabela porównująca modele
+
+---
+
+**Instalacja `uv` i zarządzanie środowiskiem (Ubuntu)**
+
+1) Instalacja `uv` (zalecane: instalator) — w terminalu:
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+# zamknij i otwórz powłokę lub wykonaj wskazaną komendę (np. `source ~/.profile`)
+uv --version
+```
+
+Alternatywa — `pipx`:
+
+```bash
+python3 -m pip install --user pipx
+python3 -m pipx ensurepath
+exec $SHELL
+pipx install uv
+uv --version
+```
+
+2) W katalogu projektu (gdzie jest `pyproject.toml`) wygeneruj plik blokujący:
+
+```bash
+# wygeneruje lub zaktualizuje uv.lock na podstawie pyproject.toml
+uv lock
+```
+
+3) Utworzenie wirtualnego środowiska i zainstalowanie zależności:
+
+```bash
+# utworzy .venv
+uv venv
+# zsynchronizuje środowisko z uv.lock i zainstaluje pakiety
+uv sync
+# aktywacja venv
+source .venv/bin/activate
+```
+
+Jeśli nie masz jeszcze `pyproject.toml`, możesz zainicjować projekt:
+
+```bash
+uv init .
+```
+
+Uwagi:
+- `uv lock` tworzy `uv.lock` (cross-platform lockfile) — powinien trafić do kontroli wersji.
+- `uv sync` tworzy/aktualizuje `.venv` i instaluje zablokowane wersje.
+- W przypadku problemów z instalacją pakietów spróbuj instalatora (pierwsza metoda) lub `pipx`.
