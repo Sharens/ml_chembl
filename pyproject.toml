@@ -24,7 +24,12 @@ dependencies = [
     "adbc-driver-sqlite",
     "statsmodels",
     "mlflow",
-    "pandas>=2.3.3",
+    "pandas>=2.3.3"
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff",
 ]
 
 [build-system]
@@ -37,3 +42,20 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["data_fetcher*"]
 
+[tool.ruff]
+# Ustawienie wersji Pythona zgodnie z Twoim projektem
+target-version = "py311"
+line-length = 88
+
+[tool.ruff.lint]
+# Wybór zestawów reguł (np. E - błędy, F - Pyflakes, I - sortowanie importów)
+select = ["E", "F", "I"]
+ignore = []
+
+[tool.ruff.format]
+quote-style = "double"
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.9",
+]

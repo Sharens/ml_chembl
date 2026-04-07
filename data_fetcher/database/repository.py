@@ -1,7 +1,9 @@
-from pathlib import Path
 from typing import Set
+
 import polars as pl
+
 from .connection import DatabaseConnection
+
 
 class TableRepository:
     """Repository class for fetching table names and data from the SQLite database."""

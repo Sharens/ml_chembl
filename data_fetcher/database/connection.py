@@ -2,6 +2,7 @@ import sqlite3
 from contextlib import contextmanager
 from pathlib import Path
 
+
 class DatabaseConnection:
     """SQLite database connection manager."""
     

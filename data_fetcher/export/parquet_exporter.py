@@ -1,11 +1,13 @@
+import logging
+from pathlib import Path
+from typing import Set
+
+import polars as pl
+from tqdm import tqdm
+
 from data_fetcher.config import CONFIG
 from data_fetcher.database.connection import DatabaseConnection
 from data_fetcher.database.repository import TableRepository
-from pathlib import Path
-from typing import Set
-import logging
-import polars as pl
-from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 

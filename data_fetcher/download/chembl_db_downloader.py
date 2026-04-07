@@ -1,9 +1,11 @@
-import httpx
-import tarfile
-import os
 import logging
+import os
+import tarfile
 from pathlib import Path
+
+import httpx
 from tqdm import tqdm
+
 from data_fetcher.config import CONFIG
 
 logger = logging.getLogger()

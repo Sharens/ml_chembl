@@ -1,7 +1,9 @@
-import polars as pl
-from pathlib import Path
-from attr import dataclass
 import logging
+from pathlib import Path
+
+import polars as pl
+from attr import dataclass
+
 
 @dataclass 
 class Config:
