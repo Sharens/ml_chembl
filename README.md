@@ -143,3 +143,31 @@ Uwagi:
 - `uv lock` tworzy `uv.lock` (cross-platform lockfile) — powinien trafić do kontroli wersji.
 - `uv sync` tworzy/aktualizuje `.venv` i instaluje zablokowane wersje.
 - W przypadku problemów z instalacją pakietów spróbuj instalatora (pierwsza metoda) lub `pipx`.
+
+---
+
+## MLflow (ocena 4.0)
+
+Notebook `learning.ipynb` ma przygotowane logowanie pełnych treningów do MLflow.
+
+1) Uruchom UI MLflow lokalnie:
+
+```bash
+mlflow ui --backend-store-uri sqlite:///mlflow.db --port 5000
+```
+
+2) W notebooku uruchom komórki treningowe z `log_mlflow=True` (MLP random/scaffold oraz finalne GNN).
+
+3) Otwórz panel:
+
+```text
+http://127.0.0.1:5000
+```
+
+Domyślna nazwa eksperymentu to `ml_chembl_baselines`, a artefakty trafiają do `mlruns/`.
+
+Jeśli nie widzisz runów, uruchom UI z absolutną ścieżką (eliminuje problem innego katalogu roboczego):
+
+```bash
+mlflow ui --backend-store-uri sqlite:////home/computer/Repositories/ml_chembl/mlflow.db --port 5000
+```
