@@ -9,3 +9,4 @@ raw_*.parquet
 .vscode
 ml_chembl.*
 mlruns
+processed_data
