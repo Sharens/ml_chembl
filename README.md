@@ -1,173 +1,75 @@
-## I. Wstępna eksploracja
-    1. Załadowanie i pierwszy rzut oka na dane
-    2. Sprawdzenie podstawowych statystyk (.describe(), .info())
-    3. Identyfikacja braków danych, duplikatów, outlierów
-    4. Stworzenie 2-3 wizualizacji (rozkłady, korelacje)
+# ml_chembl — Bioactivity Predictor (GIN + LLM Agent)
 
- 
-## II. Inżynieria cech
-    1. Które cechy wymagają transformacji? (np. skalowanie, kodowanie, transformacja logarytmiczna)
-    2. Czy trzeba tworzyć nowe cechy? (agregacje, sumowanie, dociąganie z zewnętrznych baz)
-    3. Co z brakującymi wartościami?
-    4. Jaką miarę użyjecie do oceny ważności cech?
-    
- 
-Co dostarczyć?
-Notebook z kodem i wnioskami
-Lista finalnych cech z uzasadnieniem
-2-3 kluczowe spostrzeżenia z analizy
+System do przewidywania aktywności biologicznej (pIC50) związków chemicznych na
+podstawie struktury (SMILES). Wykorzystuje sieć **GIN** (Graph Isomorphism
+Network) z PyTorch Geometric oraz **agenta LLM** (Gemma4 przez Ollama) jako
+inteligentny interfejs z tool calling.
 
----
-# Kontynuacja przedmiotu
-## Notatka: Budowa modeli baseline (Warsztaty SI)
+## Wymagania
 
-Celem zajęć jest stworzenie punktów odniesienia (baseline) dla regresji aktywności biologicznej ($IC_{50}$) związków chemicznych.
+- Python 3.11
+- [uv](https://docs.astral.sh/uv/)
+- [Ollama](https://ollama.com/) z modelem `gemma4:e4b`
 
----
-
-### 1. Model MLP (Multi-Layer Perceptron)
-
-Podejście klasyczne oparte na deskryptorach molekularnych.
-
-* **Dane wejściowe:** Formuły SMILES zamienione na **Morgan fingerprints** (przy użyciu RDKit).
-* **Architektura:** `nn.Sequential` (PyTorch).
-    * Trzy warstwy liniowe z aktywacją **ReLU** i warstwą **Dropout**.
-    * Przykładowy schemat: $2048 \to 512 \to 128 \to 1$.
-
-
-* **Konfiguracja:**
-    * **Loss:** MSE (Mean Squared Error).
-    * **Optymalizator:** Adam.
-    * **Do ustalenia:** Inicjalizacja wag oraz współczynnik uczenia (learning rate).
-
-
-
----
-
-### 2. Model GNN (Graph Neural Network)
-
-Podejście grafowe, gdzie molekuła to graf: węzły (atomy) i krawędzie (wiązania).
-
-* **Cechy węzłów:** Numer atomowy, ładunek itp.
-* **Architektura:** 2-3 warstwy `GCNConv`.
-* Schemat: `GCNConv(in, 64) -> ReLU` $\to$ `GCNConv(64, 64) -> ReLU` $\to$ `GCNConv(64, 64) -> ReLU`.
-* **Agregacja:** `global_mean_pool` (przejście z poziomu atomów do poziomu całej molekuły).
-* **Linear Head:** `Linear(64, 32) -> ReLU` $\to$ `Linear(32, 1)`.
-
-
-* **Konfiguracja:** Optymalizator Adam, loss MSE.
-
----
-
-### 3. Metodyka i Ewaluacja
-
-* **Podział danych (Splitting):**
-* Random split: 80/10/10.
-* **Scaffold split:** Podział oparty na rdzeniach strukturalnych (RDKit) – ważny dla sprawdzenia generalizacji modelu.
-
-
-* **Logika porównania:**
-1. Czy MLP jest lepsze od średniej (podejście naiwne)?
-2. Czy GNN (struktura grafu) daje lepsze wyniki niż MLP (fingerprinty)?
-
-
-* **Narzędzia:**
-* **MLflow:** Do zarządzania cyklem życia modelu i logowania wyników.
-
-
-* **Raportowanie:** Wyniki należy zebrać w tabeli:
-| Model | Typ Splitu | Funkcja Loss | $R^2$ |
-| :--- | :--- | :--- | :--- |
-| MLP | Random | MSE | ... |
-| GNN | Scaffold | ... | ... |
-
----
-
-### Źródła i materiały:
-
-* Dokumentacja: [PyTorch Sequential](https://docs.pytorch.org/docs/stable/generated/torch.nn.Sequential.html), [PyTorch Geometric](https://pytorch-geometric.readthedocs.io/en/2.7.0/modules/nn.html).
-* Teoria GNN: [Distill.pub - Intro to GNN](https://distill.pub/2021/gnn-intro/).
-* Literatura: *Grafowe sieci neuronowe. Teoria i praktyka* (F. Wójcik, 2026).
-
-## Na następne zajęcia:
-- wytrenowane modele baseline'owe (MLP, GNN dla różnych splitów)
-- przygotowana tabela porównująca modele
-
----
-
-**Instalacja `uv` i zarządzanie środowiskiem (Ubuntu)**
-
-1) Instalacja `uv` (zalecane: instalator) — w terminalu:
+## Szybki start
 
 ```bash
-curl -LsSf https://astral.sh/uv/install.sh | sh
-# zamknij i otwórz powłokę lub wykonaj wskazaną komendę (np. `source ~/.profile`)
-uv --version
-```
+# 1. Pobierz model do Ollamy (jeśli nie masz)
+ollama pull gemma4:e4b
 
-Alternatywa — `pipx`:
+# 2. Uruchom Ollamę w tle
+ollama serve &
 
-```bash
-python3 -m pip install --user pipx
-python3 -m pipx ensurepath
-exec $SHELL
-pipx install uv
-uv --version
-```
-
-2) W katalogu projektu (gdzie jest `pyproject.toml`) wygeneruj plik blokujący:
-
-```bash
-# wygeneruje lub zaktualizuje uv.lock na podstawie pyproject.toml
-uv lock
-```
-
-3) Utworzenie wirtualnego środowiska i zainstalowanie zależności:
-
-```bash
-# utworzy .venv
-uv venv
-# zsynchronizuje środowisko z uv.lock i zainstaluje pakiety
+# 3. Zainstaluj zależności
 uv sync
-# aktywacja venv
-source .venv/bin/activate
+
+# 4. Uruchom aplikację Streamlit
+uv run streamlit run agent/app.py
 ```
 
-Jeśli nie masz jeszcze `pyproject.toml`, możesz zainicjować projekt:
+Aplikacja otworzy się w przeglądarce na `http://localhost:8501`.
+
+## Trenowanie modeli
+
+Trenowanie modeli MLP i GNN odbywa się w notebooku:
 
 ```bash
-uv init .
+uv run jupyter notebook learning.ipynb
 ```
 
-Uwagi:
-- `uv lock` tworzy `uv.lock` (cross-platform lockfile) — powinien trafić do kontroli wersji.
-- `uv sync` tworzy/aktualizuje `.venv` i instaluje zablokowane wersje.
-- W przypadku problemów z instalacją pakietów spróbuj instalatora (pierwsza metoda) lub `pipx`.
+Wytrenowane modele są zapisywane w `processed_data/model_cache/` i logowane do
+MLflow (`mlflow.db`).
 
----
+## Struktura projektu
 
-## MLflow (ocena 4.0)
+```
+ml_chembl/
+├── agent/
+│   ├── model_inference.py   # Ładowanie modelu + predykcja SMILES→pIC50
+│   ├── llm_agent.py         # Agent LLM z tool calling (Ollama)
+│   └── app.py               # Streamlit UI
+├── data_fetcher/            # Pobieranie danych z ChEMBL
+├── data_processing/         # Przetwarzanie i czyszczenie danych
+├── learning.ipynb           # Trenowanie MLP i GNN
+├── processed_data/
+│   ├── model_cache/         # Checkpointy wytrenowanych modeli
+│   └── graph_cache/         # Prekompilowane grafy PyG
+└── pyproject.toml
+```
 
-Notebook `learning.ipynb` ma przygotowane logowanie pełnych treningów do MLflow.
-
-1) Uruchom UI MLflow lokalnie:
+## Testowanie
 
 ```bash
-mlflow ui --backend-store-uri sqlite:///mlflow.db --port 5000
-```
+# Test modelu (bez LLM)
+uv run python -c "
+from agent.model_inference import predict_pic50, load_model
+model, _ = load_model()
+print(predict_pic50('CC(=O)OC1=CC=CC=C1C(=O)O', model=model))
+"
 
-2) W notebooku uruchom komórki treningowe z `log_mlflow=True` (MLP random/scaffold oraz finalne GNN).
-
-3) Otwórz panel:
-
-```text
-http://127.0.0.1:5000
-```
-
-Domyślna nazwa eksperymentu to `ml_chembl_baselines`, a artefakty trafiają do `mlruns/`.
-
-Jeśli nie widzisz runów, uruchom UI z absolutną ścieżką (eliminuje problem innego katalogu roboczego):
-
-```bash
-mlflow ui --backend-store-uri sqlite:////home/computer/Repositories/ml_chembl/mlflow.db --port 5000
+# Test agenta LLM
+uv run python -c "
+from agent.llm_agent import run_agent
+print(run_agent('Predict pIC50 for CC(=O)OC1=CC=CC=C1C(=O)O'))
+"
 ```
