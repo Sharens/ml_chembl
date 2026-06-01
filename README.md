@@ -48,8 +48,7 @@ ml_chembl/
 │   ├── model_inference.py   # Ładowanie modelu + predykcja SMILES→pIC50
 │   ├── llm_agent.py         # Agent LLM z tool calling (Ollama)
 │   └── app.py               # Streamlit UI
-├── data_fetcher/            # Pobieranie danych z ChEMBL
-├── data_processing/         # Przetwarzanie i czyszczenie danych
+├── data_processing/         # Pobieranie, przetwarzanie i czyszczenie danych
 ├── learning.ipynb           # Trenowanie MLP i GNN
 ├── processed_data/
 │   ├── model_cache/         # Checkpointy wytrenowanych modeli

@@ -42,7 +42,7 @@ build-backend = "setuptools.build_meta"
 # Project-specific uv settings can go here. See: https://docs.astral.sh/uv/reference/settings/
 
 [tool.setuptools.packages.find]
-include = ["data_fetcher*", "agent*"]
+include = ["agent*", "data_processing*"]
 
 [tool.ruff]
 # Ustawienie wersji Pythona zgodnie z Twoim projektem

@@ -1,21 +1,22 @@
 import logging
 from pathlib import Path
 
-from components import Config, DataLoader, DataProcessor
+from components import Config, DataDownloader, DataLoader, DataProcessor
 
-# Konfiguracja logowania (wyświetla czas i status w konsoli)
 logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
 config = Config()
 
+downloader = DataDownloader(config)
+downloader.download_and_extract()
+
 loader = DataLoader(config)
 raw_df = loader.load_from_sqlite()
-    
+
 processor = DataProcessor(config)
-    
+
 final_df = processor.process_data(raw_df)
 
 output_dir = Path("processed_data")
