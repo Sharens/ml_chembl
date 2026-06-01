@@ -31,14 +31,64 @@ Aplikacja otworzy się w przeglądarce na `http://localhost:8501`.
 
 ## Trenowanie modeli
 
-Trenowanie modeli MLP i GNN odbywa się w notebooku:
+Kod treningowy znajduje się w `src/models/`, podzielony na osobne moduły:
+
+| Moduł | Opis |
+|---|---|
+| `config.py` | Domyślne parametry (epochs, lr, batch size) oraz stałe dla GNN (listy atomów, wiązań, hybrydyzacji) |
+| `models.py` | `MLPBaseline` (Morgan fingerprint → MLP) i `GNNRegressor` (GINEConv + BatchNorm) |
+| `data.py` | Generowanie fingerprintów Morgana, split scaffold/random, budowa grafów PyG, fabryki DataLoaderów |
+| `training.py` | `seed_everything`, `train_one_epoch`, `evaluate_loss`, `evaluate_r2` |
+| `pipeline.py` | `train_and_score` (trening + early stopping + cache + MLflow) i `tune_gnn` (grid search) |
+
+### Uruchomienie w notebooku
 
 ```bash
 uv run jupyter notebook notebooks/learning.ipynb
 ```
 
-Wytrenowane modele są zapisywane w `processed_data/model_cache/` i logowane do
-MLflow (`mlflow.db`).
+Notebook importuje funkcje z `src.models` i służy wyłącznie do konfiguracji
+eksperymentów:
+
+```python
+from src.models import train_and_score
+
+df = pl.read_parquet("processed_data/ChEMBL_processed.parquet")
+df_clean = ...  # filtracja fingerprintów
+
+train_and_score(model_type="MLP", split_type="random", df_fp=df_clean, log_mlflow=True)
+```
+
+### Użycie w kodzie
+
+```python
+from src.models.pipeline import train_and_score, tune_gnn
+from src.models.data import build_mlp_loaders, fp_from_smiles
+from src.models.models import MLPBaseline, GNNRegressor
+from src.models.training import seed_everything, get_device
+```
+
+### Grid search
+
+```python
+search_space = {
+    "lr": [1e-3, 3e-4],
+    "gnn_hidden_dim": [128, 192],
+    "gnn_num_layers": [3, 4],
+    "gnn_dropout": [0.1, 0.15],
+    "weight_decay": [1e-5],
+    "pooling": ["mean", "add"],
+}
+df_tuning = tune_gnn("scaffold", search_space, seeds=[42, 43])
+```
+
+### Wyniki
+
+- Modele cache'owane w `processed_data/model_cache/` (automatyczne wczytywanie
+  przy powtórnym uruchomieniu z tymi samymi parametrami)
+- Eksperymenty logowane do MLflow (`mlflow.db`) z histogramami epok i metrykami
+- Globalny rejestr `results_table` przechowuje wyniki z bieżącej sesji dla
+  szybkiego porównania
 
 ## Struktura projektu
 
@@ -50,6 +100,12 @@ ml_chembl/
 │   │   ├── llm_agent.py         # Agent LLM z tool calling (Ollama)
 │   │   └── app.py               # Streamlit UI
 │   ├── data_processing/         # Pobieranie, przetwarzanie i czyszczenie danych
+│   ├── models/                   # Trenowanie MLP i GNN
+│   │   ├── config.py
+│   │   ├── models.py
+│   │   ├── data.py
+│   │   ├── training.py
+│   │   └── pipeline.py
 │   └── mlflow_utils.py          # Logowanie eksperymentów MLflow
 ├── notebooks/
 │   ├── learning.ipynb           # Trenowanie MLP i GNN
