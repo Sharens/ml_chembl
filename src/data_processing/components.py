@@ -84,34 +84,29 @@ class DataDownloader:
         self.extract()
 
 
-class DataMisc:
-    @staticmethod
-    def compute_pIC50(df: pl.DataFrame) -> pl.DataFrame:
-        return df.with_columns(
-            pl.when(
-                (pl.col("standard_units") == "nM")
-                & pl.col("standard_value").is_not_null()
-            )
-            .then(-(pl.col("standard_value") * 1e-9).log10())
-            .otherwise(pl.col("pchembl_value"))
-            .alias("pIC50")
+def compute_pIC50(df: pl.DataFrame) -> pl.DataFrame:
+    return df.with_columns(
+        pl.when(
+            (pl.col("standard_units") == "nM") & pl.col("standard_value").is_not_null()
         )
+        .then(-(pl.col("standard_value") * 1e-9).log10())
+        .otherwise(pl.col("pchembl_value"))
+        .alias("pIC50")
+    )
 
-    @staticmethod
-    def impute_units(df: pl.DataFrame) -> pl.DataFrame:
-        mask_missing = (
-            pl.col("standard_units").is_null() & pl.col("standard_value").is_not_null()
-        )
-        mask_range = (pl.col("standard_value") >= 0.01) & (
-            pl.col("standard_value") <= 1e6
-        )
 
-        return df.with_columns(
-            pl.when(mask_missing & mask_range)
-            .then(pl.lit("nM"))
-            .otherwise(pl.col("standard_units"))
-            .alias("standard_units")
-        )
+def impute_units(df: pl.DataFrame) -> pl.DataFrame:
+    mask_missing = (
+        pl.col("standard_units").is_null() & pl.col("standard_value").is_not_null()
+    )
+    mask_range = (pl.col("standard_value") >= 0.01) & (pl.col("standard_value") <= 1e6)
+
+    return df.with_columns(
+        pl.when(mask_missing & mask_range)
+        .then(pl.lit("nM"))
+        .otherwise(pl.col("standard_units"))
+        .alias("standard_units")
+    )
 
 
 class DataLoader:
@@ -169,12 +164,12 @@ class DataProcessor:
         if n_value and n_value < df.height:
             df = df.sample(n=n_value, seed=seed)
 
-        df = DataMisc.impute_units(df)
-        df = DataMisc.compute_pIC50(df)
+        df = impute_units(df)
+        df = compute_pIC50(df)
 
         df_clean = df.filter(
             pl.col("pIC50").is_not_null() & pl.col("pIC50").is_infinite().not_()
         ).unique(subset=["canonical_smiles"])
 
-        print(f"Processed records: {df_clean.shape[0]}")
+        logging.info(f"Processed records: {df_clean.shape[0]}")
         return df_clean

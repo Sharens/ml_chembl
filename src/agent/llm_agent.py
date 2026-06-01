@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from functools import cache
+
 from src.agent.model_inference import load_model, predict_pic50
 
 MODEL_NAME = "gemma4:e4b"
@@ -33,16 +35,21 @@ SYSTEM_PROMPT = (
     "If the SMILES is invalid, explain what went wrong."
 )
 
-_gnn_model = None
+
+@cache
+def _get_model():
+    loaded = load_model()
+    if loaded is not None:
+        return loaded[0]
+    return None
 
 
 def _ensure_model():
-    global _gnn_model
-    if _gnn_model is None:
-        loaded = load_model()
-        if loaded is not None:
-            _gnn_model, _ = loaded
-    return _gnn_model
+    return _get_model()
+
+
+def _clear_model_cache():
+    _get_model.cache_clear()
 
 
 def _execute_tool_call(tool_call: dict) -> str:

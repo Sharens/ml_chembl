@@ -6,8 +6,9 @@ from typing import Any
 
 import mlflow
 
+from src._config import MLFLOW_DB_URI, MLRUNS
 
-DEFAULT_TRACKING_URI = "sqlite:///mlflow.db"
+DEFAULT_TRACKING_URI = MLFLOW_DB_URI
 DEFAULT_EXPERIMENT_NAME = "ml_chembl_baselines"
 
 
@@ -24,7 +25,7 @@ def _normalize_tracking_uri(tracking_uri: str) -> str:
 def configure_mlflow(
     tracking_uri: str = DEFAULT_TRACKING_URI,
     experiment_name: str = DEFAULT_EXPERIMENT_NAME,
-    artifact_root: str | Path = "mlruns",
+    artifact_root: str | Path = MLRUNS,
 ) -> str:
     """Configure local MLflow backend and return experiment ID."""
     artifact_path = Path(artifact_root)

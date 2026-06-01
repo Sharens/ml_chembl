@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import torch
@@ -9,8 +10,7 @@ from rdkit import Chem
 from torch_geometric.data import Data
 from torch_geometric.nn import BatchNorm, GINEConv, global_add_pool, global_mean_pool
 
-MODEL_CACHE_DIR = Path("processed_data/model_cache")
-GRAPH_CACHE_DIR = Path("processed_data/graph_cache")
+from src._config import MODEL_CACHE as MODEL_CACHE_DIR
 
 ATOMIC_NUM_LIST = [1, 5, 6, 7, 8, 9, 14, 15, 16, 17, 34, 35, 53]
 HYBRIDIZATION_TYPES = [
@@ -44,86 +44,61 @@ def one_hot_encode(value, categories):
     return [1 if value == cat else 0 for cat in categories]
 
 
-def mol_to_graph(smiles: str) -> Data | None:
-    mol = Chem.MolFromSmiles(smiles)
-    if mol is None:
-        return None
+def _safe_one_hot(value, categories):
+    return (
+        one_hot_encode(value, categories)
+        if value in categories
+        else [0] * len(categories)
+    )
 
+
+def _build_node_features(mol: Chem.Mol) -> list[list[float]]:
     node_feats = []
     for atom in mol.GetAtoms():
-        atomic_num = atom.GetAtomicNum()
-        one_hot_atomic = (
-            one_hot_encode(atomic_num, ATOMIC_NUM_LIST)
-            if atomic_num in ATOMIC_NUM_LIST
-            else [0] * len(ATOMIC_NUM_LIST)
-        )
-
-        hybridization = atom.GetHybridization()
-        one_hot_hybrid = (
-            one_hot_encode(hybridization, HYBRIDIZATION_TYPES)
-            if hybridization in HYBRIDIZATION_TYPES
-            else [0] * len(HYBRIDIZATION_TYPES)
-        )
-
-        chiral_tag = atom.GetChiralTag()
-        one_hot_chiral = (
-            one_hot_encode(chiral_tag, CHIRAL_TAGS)
-            if chiral_tag in CHIRAL_TAGS
-            else [0] * len(CHIRAL_TAGS)
-        )
-
-        degree = atom.GetTotalDegree() / 4.0
-        formal_charge = (atom.GetFormalCharge() + 4) / 8.0
-        num_hs = atom.GetTotalNumHs() / 4.0
-        total_valence = atom.GetTotalValence() / 8.0
-        num_radical = atom.GetNumRadicalElectrons() / 2.0
-        is_aromatic = float(atom.GetIsAromatic())
-        is_in_ring = float(atom.IsInRing())
-
         node_feats.append(
-            one_hot_atomic
-            + one_hot_hybrid
-            + one_hot_chiral
+            _safe_one_hot(atom.GetAtomicNum(), ATOMIC_NUM_LIST)
+            + _safe_one_hot(atom.GetHybridization(), HYBRIDIZATION_TYPES)
+            + _safe_one_hot(atom.GetChiralTag(), CHIRAL_TAGS)
             + [
-                degree,
-                formal_charge,
-                num_hs,
-                total_valence,
-                num_radical,
-                is_aromatic,
-                is_in_ring,
+                atom.GetTotalDegree() / 4.0,
+                (atom.GetFormalCharge() + 4) / 8.0,
+                atom.GetTotalNumHs() / 4.0,
+                atom.GetTotalValence() / 8.0,
+                atom.GetNumRadicalElectrons() / 2.0,
+                float(atom.GetIsAromatic()),
+                float(atom.IsInRing()),
             ]
         )
+    return node_feats
 
-    x = torch.tensor(node_feats, dtype=torch.float)
 
+def _build_edge_features(
+    mol: Chem.Mol,
+) -> tuple[list[list[int]], list[list[float]]]:
     edge_index_list = []
     edge_attr_list = []
     for bond in mol.GetBonds():
         u = bond.GetBeginAtomIdx()
         v = bond.GetEndAtomIdx()
-
-        bond_type = bond.GetBondType()
-        one_hot_bond = (
-            one_hot_encode(bond_type, BOND_TYPES)
-            if bond_type in BOND_TYPES
-            else [0] * len(BOND_TYPES)
-        )
-
-        stereo = bond.GetStereo()
-        one_hot_stereo = (
-            one_hot_encode(stereo, BOND_STEREO_TYPES)
-            if stereo in BOND_STEREO_TYPES
-            else [0] * len(BOND_STEREO_TYPES)
-        )
-
         bond_feats = (
-            one_hot_bond
-            + one_hot_stereo
+            _safe_one_hot(bond.GetBondType(), BOND_TYPES)
+            + _safe_one_hot(bond.GetStereo(), BOND_STEREO_TYPES)
             + [float(bond.GetIsConjugated()), float(bond.IsInRing())]
         )
         edge_index_list.extend([[u, v], [v, u]])
         edge_attr_list.extend([bond_feats, bond_feats])
+    return edge_index_list, edge_attr_list
+
+
+def mol_to_graph(smiles: str) -> Data | None:
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        return None
+
+    node_feats = _build_node_features(mol)
+    edge_index_list, edge_attr_list = _build_edge_features(mol)
+
+    x = torch.tensor(node_feats, dtype=torch.float)
 
     edge_dim = len(BOND_TYPES) + len(BOND_STEREO_TYPES) + 2
     if edge_index_list:
@@ -226,14 +201,15 @@ def _get_best_model_path() -> Path | None:
     best_r2 = -float("inf")
     for fpath in sorted(MODEL_CACHE_DIR.glob("default_*.pt")):
         try:
-            ckpt = torch.load(fpath, map_location="cpu", weights_only=False)
+            ckpt = torch.load(fpath, map_location="cpu", weights_only=True)
             result = ckpt.get("result", {})
             if result.get("model") == "GNN" and result.get("split") == "scaffold":
                 r2 = result.get("r2_val", -float("inf"))
                 if r2 > best_r2:
                     best_r2 = r2
                     best_path = fpath
-        except Exception:
+        except (RuntimeError, EOFError, KeyError):
+            logging.warning(f"Skipping corrupted checkpoint: {fpath}")
             continue
     return best_path
 
@@ -250,7 +226,7 @@ def load_model(
     if model_path is None or not model_path.exists():
         return None
 
-    ckpt = torch.load(model_path, map_location=device, weights_only=False)
+    ckpt = torch.load(model_path, map_location=device, weights_only=True)
     result = ckpt.get("result", {})
     arch = _infer_architecture(ckpt["model_state_dict"])
     pooling = result.get("pooling", "mean")
@@ -270,6 +246,14 @@ def load_model(
     return model, result
 
 
+def _error_result(smiles: str, error: str) -> dict:
+    return {"smiles": smiles, "pIC50": None, "valid": False, "error": error}
+
+
+def _success_result(smiles: str, pic50: float) -> dict:
+    return {"smiles": smiles, "pIC50": pic50, "valid": True, "error": None}
+
+
 def predict_pic50(
     smiles: str,
     model: nn.Module | None = None,
@@ -280,40 +264,20 @@ def predict_pic50(
 
     mol = Chem.MolFromSmiles(smiles)
     if mol is None:
-        return {
-            "smiles": smiles,
-            "pIC50": None,
-            "valid": False,
-            "error": "Invalid SMILES string",
-        }
+        return _error_result(smiles, "Invalid SMILES string")
 
     data = mol_to_graph(smiles)
     if data is None:
-        return {
-            "smiles": smiles,
-            "pIC50": None,
-            "valid": False,
-            "error": "Could not convert molecule to graph",
-        }
+        return _error_result(smiles, "Could not convert molecule to graph")
 
     if model is None:
         loaded = load_model(device=device)
         if loaded is None:
-            return {
-                "smiles": smiles,
-                "pIC50": None,
-                "valid": False,
-                "error": "No trained model found. Run training first.",
-            }
+            return _error_result(smiles, "No trained model found. Run training first.")
         model, _ = loaded
 
     data = data.to(device)
     with torch.no_grad():
         pred = model(data).cpu().item()
 
-    return {
-        "smiles": smiles,
-        "pIC50": round(float(pred), 4),
-        "valid": True,
-        "error": None,
-    }
+    return _success_result(smiles, round(float(pred), 4))

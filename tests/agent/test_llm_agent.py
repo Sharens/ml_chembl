@@ -1,12 +1,19 @@
 from __future__ import annotations
 
-from src.agent.llm_agent import _ensure_model, _execute_tool_call, run_agent
+from src.agent.llm_agent import (
+    _clear_model_cache,
+    _ensure_model,
+    _execute_tool_call,
+    run_agent,
+)
 
 
 class TestEnsureModel:
+    def setup_method(self):
+        _clear_model_cache()
+
     def test_returns_none_when_model_fails(self, mocker):
         mocker.patch("src.agent.llm_agent.load_model", return_value=None)
-        mocker.patch("src.agent.llm_agent._gnn_model", None)
 
         result = _ensure_model()
         assert result is None
@@ -17,18 +24,20 @@ class TestEnsureModel:
             "src.agent.llm_agent.load_model",
             return_value=(mock_model, {"r2_val": 0.8}),
         )
-        mocker.patch("src.agent.llm_agent._gnn_model", None)
 
         result = _ensure_model()
         assert result is mock_model
 
     def test_uses_cached_model(self, mocker):
         mock_model = mocker.Mock()
-        mocker.patch("src.agent.llm_agent.load_model")
-        mocker.patch("src.agent.llm_agent._gnn_model", mock_model)
+        load_model_mock = mocker.patch(
+            "src.agent.llm_agent.load_model",
+            return_value=(mock_model, {"r2_val": 0.8}),
+        )
 
-        result = _ensure_model()
-        assert result is mock_model
+        _ensure_model()
+        _ensure_model()
+        assert load_model_mock.call_count == 1
 
 
 class TestExecuteToolCall:

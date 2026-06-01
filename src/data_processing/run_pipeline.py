@@ -1,6 +1,6 @@
 import logging
-from pathlib import Path
 
+from src._config import PROCESSED_DATA
 from src.data_processing.components import (
     Config,
     DataDownloader,
@@ -24,10 +24,9 @@ processor = DataProcessor(config)
 
 final_df = processor.process_data(raw_df)
 
-output_dir = Path("processed_data")
-output_dir.mkdir(exist_ok=True)
+PROCESSED_DATA.mkdir(exist_ok=True)
 
-output_path = output_dir / "ChEMBL_processed.parquet"
+output_path = PROCESSED_DATA / "ChEMBL_processed.parquet"
 final_df.write_parquet(output_path, compression="zstd")
 
 logging.info("ETL succeeded")

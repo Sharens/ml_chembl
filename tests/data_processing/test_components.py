@@ -8,8 +8,9 @@ from src.data_processing.components import (
     Config,
     DataDownloader,
     DataLoader,
-    DataMisc,
     DataProcessor,
+    compute_pIC50,
+    impute_units,
 )
 
 
@@ -24,17 +25,17 @@ class TestConfig:
         assert cfg.data_path == tmp_path
 
 
-class TestDataMisc:
-    def test_compute_pIC50_with_nM(self, sample_polars_df):
-        result = DataMisc.compute_pIC50(sample_polars_df)
+class TestComputePIC50:
+    def test_with_nM(self, sample_polars_df):
+        result = compute_pIC50(sample_polars_df)
         pic50 = (
             result.filter(pl.col("canonical_smiles") == "CCO").select("pIC50").item()
         )
         expected = -math.log10(100.0 * 1e-9)
         assert abs(pic50 - expected) < 1e-6
 
-    def test_compute_pIC50_preserves_existing(self, sample_polars_df):
-        result = DataMisc.compute_pIC50(sample_polars_df)
+    def test_preserves_existing(self, sample_polars_df):
+        result = compute_pIC50(sample_polars_df)
         pic50 = (
             result.filter(pl.col("canonical_smiles") == "c1ccccc1")
             .select("pIC50")
@@ -42,8 +43,8 @@ class TestDataMisc:
         )
         assert pic50 == 5.5
 
-    def test_compute_pIC50_null_standard_value(self, sample_polars_df):
-        result = DataMisc.compute_pIC50(sample_polars_df)
+    def test_null_standard_value(self, sample_polars_df):
+        result = compute_pIC50(sample_polars_df)
         pic50 = (
             result.filter(pl.col("canonical_smiles") == "c1ccccc1")
             .select("pIC50")
@@ -51,8 +52,10 @@ class TestDataMisc:
         )
         assert pic50 == 5.5
 
-    def test_impute_units_missing_in_range(self, sample_polars_df):
-        result = DataMisc.impute_units(sample_polars_df)
+
+class TestImputeUnits:
+    def test_missing_in_range(self, sample_polars_df):
+        result = impute_units(sample_polars_df)
         val = (
             result.filter(pl.col("canonical_smiles") == "CC(=O)O")
             .select("standard_units")
@@ -60,8 +63,8 @@ class TestDataMisc:
         )
         assert val == "nM"
 
-    def test_impute_units_preserves_existing(self, sample_polars_df):
-        result = DataMisc.impute_units(sample_polars_df)
+    def test_preserves_existing(self, sample_polars_df):
+        result = impute_units(sample_polars_df)
         val = (
             result.filter(pl.col("canonical_smiles") == "CCO")
             .select("standard_units")
@@ -69,14 +72,14 @@ class TestDataMisc:
         )
         assert val == "nM"
 
-    def test_impute_units_out_of_range(self):
+    def test_out_of_range(self):
         df = pl.DataFrame(
             {
                 "standard_value": [1e9],
                 "standard_units": [None],
             }
         )
-        result = DataMisc.impute_units(df)
+        result = impute_units(df)
         assert result["standard_units"].item() is None
 
 
