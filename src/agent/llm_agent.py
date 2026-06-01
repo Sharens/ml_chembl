@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from agent.model_inference import load_model, predict_pic50
+from src.agent.model_inference import load_model, predict_pic50
 
 MODEL_NAME = "gemma4:e4b"
 

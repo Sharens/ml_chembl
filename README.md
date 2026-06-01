@@ -24,7 +24,7 @@ ollama serve &
 uv sync
 
 # 4. Uruchom aplikację Streamlit
-uv run streamlit run agent/app.py
+uv run streamlit run src/agent/app.py
 ```
 
 Aplikacja otworzy się w przeglądarce na `http://localhost:8501`.
@@ -34,7 +34,7 @@ Aplikacja otworzy się w przeglądarce na `http://localhost:8501`.
 Trenowanie modeli MLP i GNN odbywa się w notebooku:
 
 ```bash
-uv run jupyter notebook learning.ipynb
+uv run jupyter notebook notebooks/learning.ipynb
 ```
 
 Wytrenowane modele są zapisywane w `processed_data/model_cache/` i logowane do
@@ -44,12 +44,16 @@ MLflow (`mlflow.db`).
 
 ```
 ml_chembl/
-├── agent/
-│   ├── model_inference.py   # Ładowanie modelu + predykcja SMILES→pIC50
-│   ├── llm_agent.py         # Agent LLM z tool calling (Ollama)
-│   └── app.py               # Streamlit UI
-├── data_processing/         # Pobieranie, przetwarzanie i czyszczenie danych
-├── learning.ipynb           # Trenowanie MLP i GNN
+├── src/
+│   ├── agent/
+│   │   ├── model_inference.py   # Ładowanie modelu + predykcja SMILES→pIC50
+│   │   ├── llm_agent.py         # Agent LLM z tool calling (Ollama)
+│   │   └── app.py               # Streamlit UI
+│   ├── data_processing/         # Pobieranie, przetwarzanie i czyszczenie danych
+│   └── mlflow_utils.py          # Logowanie eksperymentów MLflow
+├── notebooks/
+│   ├── learning.ipynb           # Trenowanie MLP i GNN
+│   └── eda.ipynb                # Eksploracyjna analiza danych
 ├── processed_data/
 │   ├── model_cache/         # Checkpointy wytrenowanych modeli
 │   └── graph_cache/         # Prekompilowane grafy PyG
@@ -61,14 +65,14 @@ ml_chembl/
 ```bash
 # Test modelu (bez LLM)
 uv run python -c "
-from agent.model_inference import predict_pic50, load_model
+from src.agent.model_inference import predict_pic50, load_model
 model, _ = load_model()
 print(predict_pic50('CC(=O)OC1=CC=CC=C1C(=O)O', model=model))
 "
 
 # Test agenta LLM
 uv run python -c "
-from agent.llm_agent import run_agent
+from src.agent.llm_agent import run_agent
 print(run_agent('Predict pIC50 for CC(=O)OC1=CC=CC=C1C(=O)O'))
 "
 ```

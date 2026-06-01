@@ -4,7 +4,7 @@ import streamlit as st
 from rdkit import Chem
 from rdkit.Chem import Draw
 
-from agent.llm_agent import run_agent
+from src.agent.llm_agent import run_agent
 
 st.set_page_config(
     page_title="Bioactivity Predictor",

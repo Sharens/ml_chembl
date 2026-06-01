@@ -1,7 +1,12 @@
 import logging
 from pathlib import Path
 
-from components import Config, DataDownloader, DataLoader, DataProcessor
+from src.data_processing.components import (
+    Config,
+    DataDownloader,
+    DataLoader,
+    DataProcessor,
+)
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
