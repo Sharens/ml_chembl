@@ -10,6 +10,7 @@ Agent ma:
 - rozwijac i porownywac modele `MLP` oraz `GNN`,
 - preferowac architektury grafowe (szczegolnie `GIN`) dla danych molekularnych,
 - utrzymywac interfejs LLM jako orkiestrator wywolan narzedzi i interpretacji wynikow.
+- do zarzadzania pakietami korzystaj z `uv`
 
 ## 2) Priorytety merytoryczne
 

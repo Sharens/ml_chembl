@@ -24,7 +24,9 @@ dependencies = [
     "adbc-driver-sqlite",
     "statsmodels",
     "mlflow",
-    "pandas>=2.3.3"
+    "pandas>=2.3.3",
+    "ollama>=0.6.2",
+    "streamlit>=1.40",
 ]
 
 [project.optional-dependencies]
@@ -40,7 +42,7 @@ build-backend = "setuptools.build_meta"
 # Project-specific uv settings can go here. See: https://docs.astral.sh/uv/reference/settings/
 
 [tool.setuptools.packages.find]
-include = ["data_fetcher*"]
+include = ["data_fetcher*", "agent*"]
 
 [tool.ruff]
 # Ustawienie wersji Pythona zgodnie z Twoim projektem
