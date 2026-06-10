@@ -5,7 +5,7 @@ from copy import deepcopy
 import numpy as np
 import polars as pl
 import torch
-from rdkit import Chem
+from rdkit import Chem, RDLogger
 from rdkit.Chem import rdFingerprintGenerator
 from rdkit.Chem.Scaffolds import MurckoScaffold
 from torch.utils.data import DataLoader, TensorDataset
@@ -19,11 +19,13 @@ from src.models.config import (
     CHIRAL_TAGS,
     GRAPH_CACHE_DIR,
     GRAPH_DATA_CACHE,
-    HYBRIDIZATION_TYPES,
+    HYBRIDIZATION_INTS,
     MFP_N_BITS,
     MFP_RADIUS,
 )
 from src.models.training import compute_num_workers, get_device
+
+RDLogger.logger().setLevel(RDLogger.ERROR)
 
 # ---------------------------------------------------------------------------
 # Morgan fingerprint generator (inicjalizowany raz na poziomie modulu)
@@ -126,7 +128,77 @@ def get_split_dfs(df_fp: pl.DataFrame, split_type="random", seed=42):
         return scaffold_split(df_fp, seed=seed)
     if split_type == "random":
         return random_split_df(df_fp, seed=seed)
-    raise ValueError("split_type must be 'random' or 'scaffold'")
+    if split_type == "family":
+        return family_split(df_fp, seed=seed)
+    raise ValueError("split_type must be 'random', 'scaffold', or 'family'")
+
+
+def family_split(
+    df_fp: pl.DataFrame,
+    n_families: int = 4,
+    n_train_families: int = 2,
+    n_val_families: int = 1,
+    seed: int = 42,
+) -> tuple[pl.DataFrame, pl.DataFrame, pl.DataFrame]:
+    """Hold-out split based on molecular families (unsupervised clustering).
+
+    1. Computes Morgan fingerprints.
+    2. Reduces to 50 PCA dimensions.
+    3. Clusters molecules into n_families using KMeans.
+    4. Assigns families to train/val/test, ensuring families are different.
+
+    The test set is always one family (the remaining one).
+    """
+    from scipy.spatial.distance import cdist
+    from sklearn.cluster import KMeans
+    from sklearn.decomposition import PCA
+
+    df_idx = df_fp.with_row_index("row_id")
+
+    fps = np.stack(df_idx["fp"].to_list()).astype(np.float64)
+    pca = PCA(n_components=min(50, fps.shape[0] - 1, fps.shape[1]), random_state=seed)
+    fps_reduced = pca.fit_transform(fps)
+
+    kmeans = KMeans(n_clusters=n_families, random_state=seed, n_init=10)
+    labels = kmeans.fit_predict(fps_reduced)
+
+    centroids = kmeans.cluster_centers_
+    inter_dists = cdist(centroids, centroids)
+    np.fill_diagonal(inter_dists, float("inf"))
+    min_inter = inter_dists.min()
+
+    intra_dists = []
+    for c in range(n_families):
+        mask = labels == c
+        if mask.sum() > 1:
+            intra = cdist(fps_reduced[mask], fps_reduced[mask]).mean()
+        else:
+            intra = 0.0
+        intra_dists.append(intra)
+    mean_intra = np.mean(intra_dists)
+
+    if min_inter <= mean_intra:
+        print(
+            f"WARNING: min inter-family dist ({min_inter:.3f}) <= "
+            f"mean intra-family dist ({mean_intra:.3f}). "
+            "Families may not be well separated. Consider increasing n_families."
+        )
+
+    rng = np.random.default_rng(seed)
+    family_ids = np.arange(n_families)
+    rng.shuffle(family_ids)
+
+    train_ids = set(family_ids[:n_train_families])
+    val_ids = set(family_ids[n_train_families : n_train_families + n_val_families])
+    test_ids = set(family_ids[n_train_families + n_val_families :])
+
+    df_labeled = df_idx.with_columns(pl.Series("_family", labels).cast(pl.Int64))
+
+    return (
+        df_labeled.filter(pl.col("_family").is_in(list(train_ids))),
+        df_labeled.filter(pl.col("_family").is_in(list(val_ids))),
+        df_labeled.filter(pl.col("_family").is_in(list(test_ids))),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -138,12 +210,12 @@ def build_mlp_loaders(df_fp: pl.DataFrame, split_type="random", batch_size=64, s
     device = get_device()
     train_df, val_df, test_df = get_split_dfs(df_fp, split_type=split_type, seed=seed)
 
-    X_train = np.stack(train_df["fp"].to_list())
-    y_train = train_df["pIC50"].to_numpy().astype(np.float32)
-    X_val = np.stack(val_df["fp"].to_list())
-    y_val = val_df["pIC50"].to_numpy().astype(np.float32)
-    X_test = np.stack(test_df["fp"].to_list())
-    y_test = test_df["pIC50"].to_numpy().astype(np.float32)
+    X_train = np.stack(train_df["fp"].to_list()).astype(np.float32)
+    y_train = np.array(train_df["pIC50"].to_list(), dtype=np.float32)
+    X_val = np.stack(val_df["fp"].to_list()).astype(np.float32)
+    y_val = np.array(val_df["pIC50"].to_list(), dtype=np.float32)
+    X_test = np.stack(test_df["fp"].to_list()).astype(np.float32)
+    y_test = np.array(test_df["pIC50"].to_list(), dtype=np.float32)
 
     num_workers = compute_num_workers()
     pin = device.type == "cuda"
@@ -196,11 +268,11 @@ def mol_to_graph(smiles: str, target: float):
             else [0] * len(ATOMIC_NUM_LIST)
         )
 
-        hybridization = atom.GetHybridization()
+        hybridization = int(atom.GetHybridization())
         one_hot_hybrid = (
-            one_hot_encode(hybridization, HYBRIDIZATION_TYPES)
-            if hybridization in HYBRIDIZATION_TYPES
-            else [0] * len(HYBRIDIZATION_TYPES)
+            one_hot_encode(hybridization, HYBRIDIZATION_INTS)
+            if hybridization in HYBRIDIZATION_INTS
+            else [0] * len(HYBRIDIZATION_INTS)
         )
 
         chiral_tag = atom.GetChiralTag()
@@ -210,7 +282,7 @@ def mol_to_graph(smiles: str, target: float):
             else [0] * len(CHIRAL_TAGS)
         )
 
-        degree = atom.GetTotalDegree() / 4.0
+        degree = atom.GetTotalDegree() / 6.0
         formal_charge = (atom.GetFormalCharge() + 4) / 8.0
         num_hs = atom.GetTotalNumHs() / 4.0
         total_valence = atom.GetTotalValence() / 8.0
@@ -320,7 +392,7 @@ def _subset_graphs(df_part: pl.DataFrame, all_graphs, smiles_to_idx):
         if idx is None:
             continue
         g = deepcopy(all_graphs[idx])
-        g.y = torch.tensor([float(target)], dtype=torch.float)
+        g.y = torch.tensor(float(target), dtype=torch.float)
         graphs.append(g)
     return graphs
 

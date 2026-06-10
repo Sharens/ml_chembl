@@ -1,25 +1,17 @@
 from __future__ import annotations
 
-import logging
 from pathlib import Path
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from rdkit import Chem
 from torch_geometric.data import Data
-from torch_geometric.nn import BatchNorm, GINEConv, global_add_pool, global_mean_pool
 
 from src._config import MODEL_CACHE as MODEL_CACHE_DIR
+from src.models.gnn import GNNRegressor
 
 ATOMIC_NUM_LIST = [1, 5, 6, 7, 8, 9, 14, 15, 16, 17, 34, 35, 53]
-HYBRIDIZATION_TYPES = [
-    Chem.rdchem.HybridizationType.SP,
-    Chem.rdchem.HybridizationType.SP2,
-    Chem.rdchem.HybridizationType.SP3,
-    Chem.rdchem.HybridizationType.SP3D,
-    Chem.rdchem.HybridizationType.SP3D2,
-]
+HYBRIDIZATION_INTS = [1, 2, 3, 4, 5]  # SP, SP2, SP3, SP3D, SP3D2
 BOND_TYPES = [
     Chem.rdchem.BondType.SINGLE,
     Chem.rdchem.BondType.DOUBLE,
@@ -57,10 +49,10 @@ def _build_node_features(mol: Chem.Mol) -> list[list[float]]:
     for atom in mol.GetAtoms():
         node_feats.append(
             _safe_one_hot(atom.GetAtomicNum(), ATOMIC_NUM_LIST)
-            + _safe_one_hot(atom.GetHybridization(), HYBRIDIZATION_TYPES)
+            + _safe_one_hot(int(atom.GetHybridization()), HYBRIDIZATION_INTS)
             + _safe_one_hot(atom.GetChiralTag(), CHIRAL_TAGS)
             + [
-                atom.GetTotalDegree() / 4.0,
+                atom.GetTotalDegree() / 6.0,
                 (atom.GetFormalCharge() + 4) / 8.0,
                 atom.GetTotalNumHs() / 4.0,
                 atom.GetTotalValence() / 8.0,
@@ -111,74 +103,6 @@ def mol_to_graph(smiles: str) -> Data | None:
     return Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
 
 
-class GNNRegressor(torch.nn.Module):
-    def __init__(
-        self,
-        node_features: int,
-        edge_features: int,
-        hidden_dim: int = 128,
-        num_layers: int = 4,
-        dropout: float = 0.15,
-        pooling: str = "mean",
-    ):
-        super().__init__()
-        if pooling not in {"mean", "add"}:
-            raise ValueError("pooling must be 'mean' or 'add'")
-
-        self.pooling = pooling
-        self.dropout = dropout
-        self.node_proj = nn.Linear(node_features, hidden_dim)
-        self.edge_encoder = nn.Sequential(
-            nn.Linear(edge_features, hidden_dim),
-            nn.ReLU(),
-            nn.Linear(hidden_dim, hidden_dim),
-        )
-
-        self.convs = nn.ModuleList()
-        self.norms = nn.ModuleList()
-        for _ in range(num_layers):
-            mlp = nn.Sequential(
-                nn.Linear(hidden_dim, hidden_dim),
-                nn.ReLU(),
-                nn.Linear(hidden_dim, hidden_dim),
-            )
-            self.convs.append(GINEConv(mlp, edge_dim=hidden_dim))
-            self.norms.append(BatchNorm(hidden_dim))
-
-        self.head = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.ReLU(),
-            nn.Dropout(dropout),
-            nn.Linear(hidden_dim // 2, 1),
-        )
-
-    def _pool(self, x, batch):
-        if self.pooling == "add":
-            return global_add_pool(x, batch)
-        return global_mean_pool(x, batch)
-
-    def forward(self, data):
-        x, edge_index, edge_attr, batch = (
-            data.x,
-            data.edge_index,
-            data.edge_attr,
-            data.batch,
-        )
-        x = self.node_proj(x)
-        edge_attr = self.edge_encoder(edge_attr)
-
-        for conv, norm in zip(self.convs, self.norms):
-            residual = x
-            x = conv(x, edge_index, edge_attr)
-            x = norm(x)
-            x = F.relu(x)
-            x = F.dropout(x, p=self.dropout, training=self.training)
-            x = x + residual
-
-        x = self._pool(x, batch)
-        return self.head(x)
-
-
 def _infer_architecture(state_dict: dict) -> dict:
     node_features = state_dict["node_proj.weight"].shape[1]
     edge_features = state_dict["edge_encoder.0.weight"].shape[1]
@@ -198,18 +122,17 @@ def _get_best_model_path() -> Path | None:
     if not MODEL_CACHE_DIR.exists():
         return None
     best_path = None
-    best_r2 = -float("inf")
-    for fpath in sorted(MODEL_CACHE_DIR.glob("default_*.pt")):
+    best_auc = -float("inf")
+    for fpath in sorted(MODEL_CACHE_DIR.glob("*.pt")):
         try:
             ckpt = torch.load(fpath, map_location="cpu", weights_only=True)
             result = ckpt.get("result", {})
             if result.get("model") == "GNN" and result.get("split") == "scaffold":
                 r2 = result.get("r2_val", -float("inf"))
-                if r2 > best_r2:
-                    best_r2 = r2
+                if r2 > best_auc:
+                    best_auc = r2
                     best_path = fpath
-        except (RuntimeError, EOFError, KeyError):
-            logging.warning(f"Skipping corrupted checkpoint: {fpath}")
+        except Exception:
             continue
     return best_path
 
@@ -229,7 +152,12 @@ def load_model(
     ckpt = torch.load(model_path, map_location=device, weights_only=True)
     result = ckpt.get("result", {})
     arch = _infer_architecture(ckpt["model_state_dict"])
-    pooling = result.get("pooling", "mean")
+    pooling = result.get("pooling")
+    if pooling is None:
+        if any(k.startswith("pool.") for k in ckpt["model_state_dict"]):
+            pooling = "attention"
+        else:
+            pooling = "mean"
     dropout = result.get("gnn_dropout", 0.15)
 
     model = GNNRegressor(
@@ -266,7 +194,8 @@ def predict_pic50(
     if mol is None:
         return _error_result(smiles, "Invalid SMILES string")
 
-    data = mol_to_graph(smiles)
+    canonical_smiles = Chem.MolToSmiles(mol)
+    data = mol_to_graph(canonical_smiles)
     if data is None:
         return _error_result(smiles, "Could not convert molecule to graph")
 
@@ -280,4 +209,4 @@ def predict_pic50(
     with torch.no_grad():
         pred = model(data).cpu().item()
 
-    return _success_result(smiles, round(float(pred), 4))
+    return _success_result(canonical_smiles, round(float(pred), 4))

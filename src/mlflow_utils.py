@@ -27,7 +27,6 @@ def configure_mlflow(
     experiment_name: str = DEFAULT_EXPERIMENT_NAME,
     artifact_root: str | Path = MLRUNS,
 ) -> str:
-    """Configure local MLflow backend and return experiment ID."""
     artifact_path = Path(artifact_root)
     artifact_path.mkdir(parents=True, exist_ok=True)
 
@@ -56,7 +55,6 @@ def start_training_run(
     seed: int,
     extra_tags: dict[str, str] | None = None,
 ):
-    """Start MLflow run with project-level tags."""
     with mlflow.start_run(run_name=run_name):
         tags = {
             "project": "ml_chembl",
@@ -83,10 +81,6 @@ def log_split_sizes(train_size: int, val_size: int, test_size: int) -> None:
 
 
 def log_epoch_metrics(history: list[dict[str, Any]]) -> None:
-    """Log per-epoch metrics from a list of dicts.
-
-    Each row can contain keys like: epoch, train_loss, val_loss, val_r2, lr.
-    """
     for row in history:
         step = int(row["epoch"])
         for key in ("train_loss", "val_loss", "val_r2", "lr"):
@@ -96,9 +90,25 @@ def log_epoch_metrics(history: list[dict[str, Any]]) -> None:
 
 
 def log_final_metrics(
-    *, best_val_loss: float, r2_val: float, r2_test: float | None = None
+    *,
+    best_val_loss: float,
+    r2_val: float | None = None,
+    rmse_val: float | None = None,
+    mae_val: float | None = None,
+    r2_test: float | None = None,
+    rmse_test: float | None = None,
+    mae_test: float | None = None,
 ) -> None:
     mlflow.log_metric("best_val_loss", float(best_val_loss))
-    mlflow.log_metric("r2_val", float(r2_val))
+    if r2_val is not None:
+        mlflow.log_metric("r2_val", float(r2_val))
+    if rmse_val is not None:
+        mlflow.log_metric("rmse_val", float(rmse_val))
+    if mae_val is not None:
+        mlflow.log_metric("mae_val", float(mae_val))
     if r2_test is not None:
         mlflow.log_metric("r2_test", float(r2_test))
+    if rmse_test is not None:
+        mlflow.log_metric("rmse_test", float(rmse_test))
+    if mae_test is not None:
+        mlflow.log_metric("mae_test", float(mae_test))

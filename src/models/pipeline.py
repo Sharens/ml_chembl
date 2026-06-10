@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import concurrent.futures
 import hashlib
+import io
 import json
+import multiprocessing
+import pickle
 from copy import deepcopy
 from pathlib import Path
 
@@ -22,6 +26,7 @@ from src.models.config import (
     BATCH_SIZE_DEFAULT,
     EARLY_STOPPING_PATIENCE_DEFAULT,
     EPOCHS_DEFAULT,
+    LOSS_FN_DEFAULT,
     LR_DEFAULT,
     MIN_DELTA_DEFAULT,
     POOLING_DEFAULT,
@@ -34,12 +39,128 @@ from src.models.data import (
 )
 from src.models.models import GNNRegressor, MLPBaseline
 from src.models.training import (
+    evaluate_all_metrics,
     evaluate_loss,
     evaluate_r2,
     get_device,
     seed_everything,
     train_one_epoch,
 )
+
+# ---------------------------------------------------------------------------
+# Pomocnicza serializacja DataFrame z kolumna Object (fp) dla workerow
+# ---------------------------------------------------------------------------
+
+
+def _serialize_df(df: pl.DataFrame) -> tuple[bytes, bytes]:
+    fp_col = df.select("fp").to_series().to_list()
+    fp_bytes = pickle.dumps(fp_col)
+    buf = io.BytesIO()
+    df.drop("fp").write_parquet(buf)
+    return buf.getvalue(), fp_bytes
+
+
+def _deserialize_df(df_bytes: bytes, fp_bytes: bytes) -> pl.DataFrame:
+    df = pl.read_parquet(io.BytesIO(df_bytes))
+    fp_series = pl.Series("fp", pickle.loads(fp_bytes))
+    return df.with_columns(fp_series)
+
+
+def _get_loss_fn(name: str) -> torch.nn.Module:
+    if name == "huber":
+        return torch.nn.HuberLoss(delta=1.0)
+    elif name == "mse":
+        return torch.nn.MSELoss()
+    elif name == "mae":
+        return torch.nn.L1Loss()
+    raise ValueError(f"Unknown loss function: {name}")
+
+
+# ---------------------------------------------------------------------------
+# Worker functions dla zrownoleglenia (module-level = picklable)
+# ---------------------------------------------------------------------------
+
+
+def _tune_config_worker(args: tuple) -> dict:
+    (
+        lr,
+        wd,
+        pooling,
+        hidden,
+        layers,
+        dropout,
+        seeds,
+        df_bytes,
+        fp_bytes,
+        common_kwargs,
+    ) = args
+
+    import torch.utils.data
+    from src.models.training import compute_num_workers
+
+    compute_num_workers.__defaults__ = (0,)
+
+    df_fp = _deserialize_df(df_bytes, fp_bytes)
+
+    per_seed = []
+    for seed in seeds:
+        res = train_and_score(
+            model_type="GNN",
+            split_type=common_kwargs["split_type"],
+            df_fp=df_fp,
+            epochs=common_kwargs["epochs"],
+            lr=lr,
+            batch_size=common_kwargs["batch_size"],
+            seed=seed,
+            log_mlflow=False,
+            replace_existing=False,
+            evaluate_test=False,
+            early_stopping_patience=common_kwargs["early_stopping_patience"],
+            min_delta=common_kwargs["min_delta"],
+            weight_decay=wd,
+            pooling=pooling,
+            gnn_hidden_dim=hidden,
+            gnn_num_layers=layers,
+            gnn_dropout=dropout,
+            prefer_cuda=common_kwargs["prefer_cuda"],
+            deterministic=False,
+            use_amp=True,
+            use_model_cache=True,
+            force_retrain=False,
+            cache_namespace="gnn_tuning",
+        )
+        per_seed.append(res)
+
+    val_r2 = [r["r2_val"] for r in per_seed]
+    val_rmse = [r["rmse_val"] for r in per_seed]
+    val_loss = [r["best_val_loss"] for r in per_seed]
+
+    return {
+        "lr": lr,
+        "weight_decay": wd,
+        "pooling": pooling,
+        "gnn_hidden_dim": hidden,
+        "gnn_num_layers": layers,
+        "gnn_dropout": dropout,
+        "per_seed_results": per_seed,
+        "r2_val_mean": float(np.mean(val_r2)),
+        "r2_val_std": float(np.std(val_r2)),
+        "rmse_val_mean": float(np.mean(val_rmse)),
+        "rmse_val_std": float(np.std(val_rmse)),
+        "best_val_loss_mean": float(np.mean(val_loss)),
+        "best_val_loss_std": float(np.std(val_loss)),
+    }
+
+
+def _single_train_worker(args: tuple) -> dict:
+    kwargs_bytes, df_bytes, fp_bytes = args
+
+    kwargs = pickle.loads(kwargs_bytes)
+    kwargs["df_fp"] = _deserialize_df(df_bytes, fp_bytes)
+    kwargs["log_mlflow"] = False
+
+    return train_and_score(**kwargs)
+
 
 # ---------------------------------------------------------------------------
 # Globalny rejestr wynikow
@@ -115,6 +236,7 @@ def train_and_score(
     gnn_hidden_dim: int = 128,
     gnn_num_layers: int = 4,
     gnn_dropout: float = 0.15,
+    loss_fn: str = LOSS_FN_DEFAULT,
     prefer_cuda: bool = True,
     deterministic: bool = False,
     use_amp: bool = True,
@@ -174,6 +296,7 @@ def train_and_score(
         "gnn_hidden_dim": gnn_hidden_dim,
         "gnn_num_layers": gnn_num_layers,
         "gnn_dropout": gnn_dropout,
+        "loss_fn": loss_fn,
     }
     model_cache_path = get_model_cache_path(cache_config, namespace=cache_namespace)
 
@@ -184,20 +307,22 @@ def train_and_score(
             )
             model.load_state_dict(cached["model_state_dict"])
 
-            r2_val = evaluate_r2(
+            results = evaluate_all_metrics(
                 model, val_loader, device, is_gnn=is_gnn_flag, use_amp=amp_enabled
             )
-            r2_test = (
-                evaluate_r2(
+            r2_val = results["r2"]
+            rmse_val = results["rmse"]
+            mae_val = results["mae"]
+
+            test_results = {}
+            if evaluate_test:
+                test_results = evaluate_all_metrics(
                     model,
                     test_loader,
                     device,
                     is_gnn=is_gnn_flag,
                     use_amp=amp_enabled,
                 )
-                if evaluate_test
-                else None
-            )
 
             result = cached.get("result", {}).copy()
             result.update(
@@ -206,7 +331,11 @@ def train_and_score(
                     "split": split_type,
                     "seed": seed,
                     "r2_val": r2_val,
-                    "r2_test": r2_test,
+                    "rmse_val": rmse_val,
+                    "mae_val": mae_val,
+                    "r2_test": test_results.get("r2"),
+                    "rmse_test": test_results.get("rmse"),
+                    "mae_test": test_results.get("mae"),
                     "device": str(device),
                     "amp_enabled": amp_enabled,
                     "from_cache": True,
@@ -232,6 +361,7 @@ def train_and_score(
                     gnn_hidden_dim=gnn_hidden_dim,
                     gnn_num_layers=gnn_num_layers,
                     gnn_dropout=gnn_dropout,
+                    loss_fn=loss_fn,
                     device=device,
                     amp_enabled=amp_enabled,
                     deterministic=deterministic,
@@ -257,7 +387,10 @@ def train_and_score(
                 lr=lr,
                 weight_decay=weight_decay,
             )
-            print(f"Loaded cached model: {model_cache_path.name} | val R2={r2_val:.3f}")
+            print(
+                f"Loaded cached model: {model_cache_path.name} | "
+                f"val R²={r2_val:.3f} RMSE={rmse_val:.3f} MAE={mae_val:.3f}"
+            )
             return result
         except Exception as exc:
             print(f"Model cache load failed ({exc}); training from scratch...")
@@ -267,10 +400,10 @@ def train_and_score(
         optimizer,
         mode="min",
         factor=0.5,
-        patience=max(2, early_stopping_patience // 3),
+        patience=6,
         min_lr=1e-6,
     )
-    criterion = torch.nn.MSELoss()
+    criterion = _get_loss_fn(loss_fn)
 
     train_losses = []
     val_losses = []
@@ -330,14 +463,18 @@ def train_and_score(
     avg_train_loss = float(np.mean(train_losses))
     avg_val_loss = float(np.mean(val_losses))
 
-    r2_val = evaluate_r2(
+    results = evaluate_all_metrics(
         model, val_loader, device, is_gnn=is_gnn_flag, use_amp=amp_enabled
     )
-    r2_test = (
-        evaluate_r2(model, test_loader, device, is_gnn=is_gnn_flag, use_amp=amp_enabled)
-        if evaluate_test
-        else None
-    )
+    r2_val = results["r2"]
+    rmse_val = results["rmse"]
+    mae_val = results["mae"]
+
+    test_results = {}
+    if evaluate_test:
+        test_results = evaluate_all_metrics(
+            model, test_loader, device, is_gnn=is_gnn_flag, use_amp=amp_enabled
+        )
 
     if log_mlflow:
         _log_to_mlflow(
@@ -357,6 +494,7 @@ def train_and_score(
             gnn_hidden_dim=gnn_hidden_dim,
             gnn_num_layers=gnn_num_layers,
             gnn_dropout=gnn_dropout,
+            loss_fn=loss_fn,
             device=device,
             amp_enabled=amp_enabled,
             deterministic=deterministic,
@@ -376,7 +514,11 @@ def train_and_score(
             avg_train_loss=avg_train_loss,
             avg_val_loss=avg_val_loss,
             r2_val=r2_val,
-            r2_test=r2_test,
+            rmse_val=rmse_val,
+            mae_val=mae_val,
+            r2_test=test_results.get("r2"),
+            rmse_test=test_results.get("rmse"),
+            mae_test=test_results.get("mae"),
         )
 
     result = {
@@ -393,11 +535,16 @@ def train_and_score(
         "gnn_hidden_dim": gnn_hidden_dim,
         "gnn_num_layers": gnn_num_layers,
         "gnn_dropout": gnn_dropout,
+        "loss_fn": loss_fn,
         "avg_train_loss": avg_train_loss,
         "avg_val_loss": avg_val_loss,
         "best_val_loss": float(best_val_loss),
         "r2_val": r2_val,
-        "r2_test": r2_test,
+        "rmse_val": rmse_val,
+        "mae_val": mae_val,
+        "r2_test": test_results.get("r2"),
+        "rmse_test": test_results.get("rmse"),
+        "mae_test": test_results.get("mae"),
         "device": str(device),
         "amp_enabled": amp_enabled,
         "from_cache": False,
@@ -406,6 +553,7 @@ def train_and_score(
 
     if use_model_cache:
         try:
+            model_cache_path.parent.mkdir(parents=True, exist_ok=True)
             torch.save(
                 {"model_state_dict": model.state_dict(), "result": result},
                 model_cache_path,
@@ -427,20 +575,19 @@ def train_and_score(
         weight_decay=weight_decay,
     )
 
-    if r2_test is None:
-        print(
-            f"{model_type} | {split_type} | device={device}: "
-            f"avg train loss={avg_train_loss:.4f}, avg val loss={avg_val_loss:.4f}, "
-            f"best val loss={best_val_loss:.4f}, best epoch={best_epoch}, "
-            f"val R2={r2_val:.3f}"
+    test_suffix = ""
+    if evaluate_test:
+        test_suffix = (
+            f", test R²={test_results.get('r2', 0):.3f} "
+            f"RMSE={test_results.get('rmse', 0):.3f}"
         )
-    else:
-        print(
-            f"{model_type} | {split_type} | device={device}: "
-            f"avg train loss={avg_train_loss:.4f}, avg val loss={avg_val_loss:.4f}, "
-            f"best val loss={best_val_loss:.4f}, best epoch={best_epoch}, "
-            f"val R2={r2_val:.3f}, test R2={r2_test:.3f}"
-        )
+    print(
+        f"{model_type} | {split_type} | device={device}: "
+        f"avg train loss={avg_train_loss:.4f}, avg val loss={avg_val_loss:.4f}, "
+        f"best val loss={best_val_loss:.4f}, best epoch={best_epoch}, "
+        f"val R²={r2_val:.3f} RMSE={rmse_val:.3f} MAE={mae_val:.3f}"
+        f"{test_suffix}"
+    )
     return result
 
 
@@ -467,6 +614,7 @@ def _log_to_mlflow(
     gnn_hidden_dim,
     gnn_num_layers,
     gnn_dropout,
+    loss_fn,
     device,
     amp_enabled,
     deterministic,
@@ -486,7 +634,11 @@ def _log_to_mlflow(
     avg_train_loss=None,
     avg_val_loss=None,
     r2_val=None,
+    rmse_val=None,
+    mae_val=None,
     r2_test=None,
+    rmse_test=None,
+    mae_test=None,
 ):
     run_suffix = "_cache" if from_cache else ""
     with start_training_run(
@@ -515,6 +667,7 @@ def _log_to_mlflow(
             "gnn_hidden_dim": gnn_hidden_dim,
             "gnn_num_layers": gnn_num_layers,
             "gnn_dropout": gnn_dropout,
+            "loss_fn": loss_fn,
             "device": str(device),
             "amp_enabled": amp_enabled,
             "deterministic": deterministic,
@@ -536,46 +689,66 @@ def _log_to_mlflow(
         )
 
         if from_cache and result is not None:
-            cached_avg_train_loss = result.get("avg_train_loss")
-            cached_avg_val_loss = result.get("avg_val_loss")
-            cached_best_val_loss = result.get("best_val_loss")
-            if cached_avg_train_loss is not None:
-                mlflow.log_metric("avg_train_loss", float(cached_avg_train_loss))
-            if cached_avg_val_loss is not None:
-                mlflow.log_metric("avg_val_loss", float(cached_avg_val_loss))
-            if cached_best_val_loss is not None:
-                log_final_metrics(
-                    best_val_loss=float(cached_best_val_loss),
-                    r2_val=r2_val,
-                    r2_test=r2_test,
-                )
-            else:
-                mlflow.log_metric("r2_val", float(r2_val))
-                if r2_test is not None:
-                    mlflow.log_metric("r2_test", float(r2_test))
+            _log_cached_metrics(
+                result, r2_val, rmse_val, mae_val, r2_test, rmse_test, mae_test
+            )
         else:
             mlflow.log_metric("avg_train_loss", float(avg_train_loss))
             mlflow.log_metric("avg_val_loss", float(avg_val_loss))
             log_final_metrics(
                 best_val_loss=float(best_val_loss),
                 r2_val=r2_val,
+                rmse_val=rmse_val,
+                mae_val=mae_val,
                 r2_test=r2_test,
+                rmse_test=rmse_test,
+                mae_test=mae_test,
             )
             epoch_history = [
                 {
                     "epoch": i,
                     "train_loss": tr,
                     "val_loss": va,
-                    "val_r2": va_r2,
+                    "val_r2": vr2,
                     "lr": lri,
                 }
-                for i, (tr, va, va_r2, lri) in enumerate(
+                for i, (tr, va, vr2, lri) in enumerate(
                     zip(train_losses, val_losses, val_r2_history, lr_history),
                     start=1,
                 )
             ]
             log_epoch_metrics(epoch_history)
             mlflow.pytorch.log_model(model, "model")
+
+
+def _log_cached_metrics(
+    result, r2_val, rmse_val, mae_val, r2_test, rmse_test, mae_test
+):
+    cached_avg_train_loss = result.get("avg_train_loss")
+    cached_avg_val_loss = result.get("avg_val_loss")
+    cached_best_val_loss = result.get("best_val_loss")
+    if cached_avg_train_loss is not None:
+        mlflow.log_metric("avg_train_loss", float(cached_avg_train_loss))
+    if cached_avg_val_loss is not None:
+        mlflow.log_metric("avg_val_loss", float(cached_avg_val_loss))
+    if cached_best_val_loss is not None:
+        log_final_metrics(
+            best_val_loss=float(cached_best_val_loss),
+            r2_val=r2_val,
+            rmse_val=rmse_val,
+            mae_val=mae_val,
+            r2_test=r2_test,
+            rmse_test=rmse_test,
+            mae_test=mae_test,
+        )
+    else:
+        mlflow.log_metric("r2_val", float(r2_val))
+        mlflow.log_metric("rmse_val", float(rmse_val))
+        mlflow.log_metric("mae_val", float(mae_val))
+        if r2_test is not None:
+            mlflow.log_metric("r2_test", float(r2_test))
+        if rmse_test is not None:
+            mlflow.log_metric("rmse_test", float(rmse_test))
 
 
 # ---------------------------------------------------------------------------
@@ -594,10 +767,12 @@ def tune_gnn(
     min_delta: float = MIN_DELTA_DEFAULT,
     log_mlflow: bool = False,
     prefer_cuda: bool = True,
+    max_workers: int = 1,
 ):
     import itertools
 
-    import pandas as pd
+    if df_fp is None:
+        raise ValueError("df_fp must be provided")
 
     keys = [
         "lr",
@@ -609,6 +784,112 @@ def tune_gnn(
     ]
     combos = list(itertools.product(*(search_space[k] for k in keys)))
 
+    common_kwargs = {
+        "split_type": split_type,
+        "epochs": epochs,
+        "batch_size": batch_size,
+        "early_stopping_patience": early_stopping_patience,
+        "min_delta": min_delta,
+        "prefer_cuda": prefer_cuda,
+    }
+
+    # --- sciezka rownolegla ---
+    if max_workers > 1:
+        try:
+            from src.models.data import load_or_build_graph_cache
+
+            load_or_build_graph_cache(df_fp)
+        except Exception as exc:
+            print(f"Graph cache pre-build warning: {exc}")
+
+        df_bytes, fp_bytes = _serialize_df(df_fp)
+
+        worker_args = [
+            (
+                lr,
+                wd,
+                pooling,
+                hidden,
+                layers,
+                dropout,
+                seeds,
+                df_bytes,
+                fp_bytes,
+                common_kwargs,
+            )
+            for lr, wd, pooling, hidden, layers, dropout in combos
+        ]
+
+        ctx = multiprocessing.get_context("spawn")
+        worker_results: list[dict] = []
+        with concurrent.futures.ProcessPoolExecutor(
+            mp_context=ctx, max_workers=max_workers
+        ) as executor:
+            futures = {
+                executor.submit(_tune_config_worker, arg): i
+                for i, arg in enumerate(worker_args)
+            }
+            for future in concurrent.futures.as_completed(futures):
+                idx = futures[future]
+                try:
+                    wr = future.result()
+                    worker_results.append(wr)
+                    print(
+                        f"[{split_type}] config {idx + 1}/{len(combos)} done | "
+                        f"R² mean={wr['r2_val_mean']:.3f} ± {wr['r2_val_std']:.3f}"
+                    )
+                except Exception as exc:
+                    print(
+                        f"[{split_type}] config {idx + 1}/{len(combos)} FAILED: {exc}"
+                    )
+
+        tuning_rows = []
+        for wr in worker_results:
+            tuning_rows.append(
+                {
+                    "model": "GNN",
+                    "split": split_type,
+                    "lr": wr["lr"],
+                    "weight_decay": wr["weight_decay"],
+                    "pooling": wr["pooling"],
+                    "gnn_hidden_dim": wr["gnn_hidden_dim"],
+                    "gnn_num_layers": wr["gnn_num_layers"],
+                    "gnn_dropout": wr["gnn_dropout"],
+                    "seeds": ",".join(str(s) for s in seeds),
+                    "epochs_selection": epochs,
+                    "r2_val_mean": wr["r2_val_mean"],
+                    "r2_val_std": wr["r2_val_std"],
+                    "rmse_val_mean": wr["rmse_val_mean"],
+                    "rmse_val_std": wr["rmse_val_std"],
+                    "best_val_loss_mean": wr["best_val_loss_mean"],
+                    "best_val_loss_std": wr["best_val_loss_std"],
+                }
+            )
+            for seed_res in wr["per_seed_results"]:
+                _upsert_result(
+                    result=seed_res,
+                    replace_existing=False,
+                    model_type=seed_res["model"],
+                    split_type=seed_res["split"],
+                    seed=seed_res["seed"],
+                    pooling=seed_res.get("pooling", POOLING_DEFAULT),
+                    gnn_hidden_dim=seed_res.get("gnn_hidden_dim", 128),
+                    gnn_num_layers=seed_res.get("gnn_num_layers", 4),
+                    gnn_dropout=seed_res.get("gnn_dropout", 0.15),
+                    lr=seed_res["lr"],
+                    weight_decay=seed_res["weight_decay"],
+                )
+
+        df_tuning = pl.DataFrame(tuning_rows).sort(
+            ["r2_val_mean", "rmse_val_mean"], descending=[True, False]
+        )
+
+        if log_mlflow:
+            _log_tuning_batch(df_tuning, split_type, search_space, seeds, epochs)
+
+        return df_tuning
+
+    # --- sciezka sekwencyjna (oryginalna) ---
     tuning_rows = []
     for i, (lr, wd, pooling, hidden, layers, dropout) in enumerate(combos, start=1):
         print(
@@ -646,6 +927,7 @@ def tune_gnn(
             per_seed.append(res)
 
         val_r2 = [r["r2_val"] for r in per_seed]
+        val_rmse = [r["rmse_val"] for r in per_seed]
         val_loss = [r["best_val_loss"] for r in per_seed]
         tuning_rows.append(
             {
@@ -661,14 +943,196 @@ def tune_gnn(
                 "epochs_selection": epochs,
                 "r2_val_mean": float(np.mean(val_r2)),
                 "r2_val_std": float(np.std(val_r2)),
+                "rmse_val_mean": float(np.mean(val_rmse)),
+                "rmse_val_std": float(np.std(val_rmse)),
                 "best_val_loss_mean": float(np.mean(val_loss)),
                 "best_val_loss_std": float(np.std(val_loss)),
             }
         )
 
-    df_tuning = (
-        pd.DataFrame(tuning_rows)
-        .sort_values(["r2_val_mean", "best_val_loss_mean"], ascending=[False, True])
-        .reset_index(drop=True)
+    df_tuning = pl.DataFrame(tuning_rows).sort(
+        ["r2_val_mean", "rmse_val_mean"], descending=[True, False]
     )
     return df_tuning
+
+
+# ---------------------------------------------------------------------------
+# Batch MLflow logging dla grid searcha
+# ---------------------------------------------------------------------------
+
+
+def _log_tuning_batch(
+    df_tuning: pl.DataFrame,
+    split_type: str,
+    search_space: dict,
+    seeds: list[int],
+    epochs: int,
+):
+    import tempfile
+
+    configure_mlflow()
+
+    with mlflow.start_run(
+        run_name=f"GNN_tune_{split_type}_{len(df_tuning)}configs",
+        tags={
+            "project": "ml_chembl",
+            "task": "grid_search",
+            "split_type": split_type,
+        },
+    ):
+        mlflow.log_params(
+            {
+                "split_type": split_type,
+                "n_configs": len(df_tuning),
+                "n_seeds": len(seeds),
+                "seeds": ",".join(str(s) for s in seeds),
+                "epochs": epochs,
+                "search_space": json.dumps(search_space),
+            }
+        )
+
+        if not df_tuning.is_empty():
+            best = df_tuning.row(0, named=True)
+            mlflow.log_metrics(
+                {
+                    "best_r2_val_mean": float(best["r2_val_mean"]),
+                    "best_r2_val_std": float(best["r2_val_std"]),
+                    "best_rmse_val_mean": float(best["rmse_val_mean"]),
+                    "best_val_loss_mean": float(best["best_val_loss_mean"]),
+                }
+            )
+
+        with tempfile.NamedTemporaryFile(suffix=".csv", delete=False, mode="w") as f:
+            df_tuning.write_csv(f.name)
+            mlflow.log_artifact(f.name, "tuning_results")
+
+
+# ---------------------------------------------------------------------------
+# Zrownoleglone wywolywanie wielu train_and_score
+# ---------------------------------------------------------------------------
+
+
+def run_parallel_trainings(
+    train_specs: list[dict],
+    max_workers: int = 2,
+    log_mlflow: bool = True,
+):
+    if max_workers <= 1:
+        results = {}
+        for i, spec in enumerate(train_specs):
+            results[i] = train_and_score(**spec)
+        return results
+
+    ctx = multiprocessing.get_context("spawn")
+
+    worker_args = []
+    for spec in train_specs:
+        spec_copy = dict(spec)
+        df_fp = spec_copy.pop("df_fp", None)
+
+        if df_fp is not None:
+            df_bytes, fp_bytes = _serialize_df(df_fp)
+        else:
+            df_bytes = b""
+            fp_bytes = b""
+
+        kwargs_bytes = pickle.dumps(spec_copy)
+        worker_args.append((kwargs_bytes, df_bytes, fp_bytes))
+
+    results: dict[int, dict] = {}
+    with concurrent.futures.ProcessPoolExecutor(
+        mp_context=ctx, max_workers=max_workers
+    ) as executor:
+        futures = {
+            executor.submit(_single_train_worker, arg): i
+            for i, arg in enumerate(worker_args)
+        }
+        for future in concurrent.futures.as_completed(futures):
+            idx = futures[future]
+            try:
+                result = future.result()
+                results[idx] = result
+
+                _upsert_result(
+                    result=result,
+                    replace_existing=False,
+                    model_type=result["model"],
+                    split_type=result["split"],
+                    seed=result["seed"],
+                    pooling=result.get("pooling", POOLING_DEFAULT),
+                    gnn_hidden_dim=result.get("gnn_hidden_dim", 128),
+                    gnn_num_layers=result.get("gnn_num_layers", 4),
+                    gnn_dropout=result.get("gnn_dropout", 0.15),
+                    lr=result["lr"],
+                    weight_decay=result["weight_decay"],
+                )
+            except Exception as exc:
+                print(f"Worker {idx} failed: {exc}")
+
+    if log_mlflow:
+        _log_parallel_trainings_batch(results)
+
+    return results
+
+
+def _log_parallel_trainings_batch(
+    results: dict[int, dict],
+):
+    for idx, result in results.items():
+        run_name = f"{result['model']}_{result['split']}_seed{result['seed']}"
+        if result.get("from_cache"):
+            run_name += "_cache"
+
+        configure_mlflow()
+        with mlflow.start_run(
+            run_name=run_name,
+            tags={
+                "project": "ml_chembl",
+                "task": "bioactivity_regression",
+                "target": "pIC50",
+                "model_type": result["model"],
+                "split_type": result["split"],
+                "seed": str(result["seed"]),
+                "from_cache": str(result.get("from_cache", False)).lower(),
+                "parallel": "true",
+            },
+        ):
+            params = {
+                k: result[k]
+                for k in [
+                    "model",
+                    "split",
+                    "seed",
+                    "epochs",
+                    "epochs_trained",
+                    "best_epoch",
+                    "lr",
+                    "batch_size",
+                    "weight_decay",
+                    "pooling",
+                    "gnn_hidden_dim",
+                    "gnn_num_layers",
+                    "gnn_dropout",
+                    "loss_fn",
+                    "device",
+                    "amp_enabled",
+                    "from_cache",
+                    "cache_path",
+                ]
+                if k in result
+            }
+            mlflow.log_params(params)
+
+            for key in (
+                "avg_train_loss",
+                "avg_val_loss",
+                "best_val_loss",
+                "r2_val",
+                "rmse_val",
+                "mae_val",
+                "r2_test",
+                "rmse_test",
+                "mae_test",
+            ):
+                if key in result and result[key] is not None:
+                    mlflow.log_metric(key, float(result[key]))
