@@ -69,6 +69,7 @@ class TestGNNRegressor:
 
     def test_forward_shape(self):
         model = GNNRegressor(10, 4, hidden_dim=16, num_layers=2)
+        model.eval()
         x = torch.randn(5, 10)
         edge_index = torch.tensor([[0, 1, 2, 3], [1, 2, 3, 4]])
         edge_attr = torch.randn(4, 4)

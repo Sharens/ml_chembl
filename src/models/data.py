@@ -303,28 +303,27 @@ def build_mlp_loaders(
     y_test = np.array(test_df["pIC50"].to_list(), dtype=np.float32)
 
     num_workers = compute_num_workers()
-    pin = device.type == "cuda"
 
     train_loader = DataLoader(
         TensorDataset(torch.from_numpy(X_train), torch.from_numpy(y_train)),
         batch_size=batch_size,
         shuffle=True,
         num_workers=num_workers,
-        pin_memory=pin,
+        pin_memory=False,
         persistent_workers=(num_workers > 0),
     )
     val_loader = DataLoader(
         TensorDataset(torch.from_numpy(X_val), torch.from_numpy(y_val)),
         batch_size=batch_size,
         num_workers=num_workers,
-        pin_memory=pin,
+        pin_memory=False,
         persistent_workers=(num_workers > 0),
     )
     test_loader = DataLoader(
         TensorDataset(torch.from_numpy(X_test), torch.from_numpy(y_test)),
         batch_size=batch_size,
         num_workers=num_workers,
-        pin_memory=pin,
+        pin_memory=False,
         persistent_workers=(num_workers > 0),
     )
     return train_loader, val_loader, test_loader
@@ -544,28 +543,24 @@ def build_gnn_loaders(
     test_graphs = _subset_graphs(test_df, all_graphs, smiles_to_idx)
 
     num_workers = compute_num_workers()
-    pin = device.type == "cuda"
 
     train_loader = GeoDataLoader(
         train_graphs,
         batch_size=batch_size,
         shuffle=True,
         num_workers=num_workers,
-        pin_memory=pin,
-        persistent_workers=(num_workers > 0),
+        pin_memory=False,
     )
     val_loader = GeoDataLoader(
         val_graphs,
         batch_size=batch_size,
         num_workers=num_workers,
-        pin_memory=pin,
-        persistent_workers=(num_workers > 0),
+        pin_memory=False,
     )
     test_loader = GeoDataLoader(
         test_graphs,
         batch_size=batch_size,
         num_workers=num_workers,
-        pin_memory=pin,
-        persistent_workers=(num_workers > 0),
+        pin_memory=False,
     )
     return train_loader, val_loader, test_loader

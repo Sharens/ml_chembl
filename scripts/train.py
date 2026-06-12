@@ -71,7 +71,14 @@ def cmd_train(args):
         "mlp_hidden_sizes": args.mlp_hidden_sizes,
         "mlp_dropout": args.mlp_dropout,
         "scheduler_type": args.scheduler,
+        "auto_adjust_for_scaffold": args.auto_adjust,
     }
+    if args.accumulation_steps is not None:
+        spec["accumulation_steps"] = args.accumulation_steps
+    if args.num_residual_blocks is not None:
+        spec["num_residual_blocks"] = args.num_residual_blocks
+    if args.use_augmentation is not None:
+        spec["use_augmentation"] = args.use_augmentation
     result = train_and_score(**spec)
     print(f"\nResult: R²={result['r2_val']:.4f}  RMSE={result['rmse_val']:.4f}")
 
@@ -93,6 +100,7 @@ def cmd_train_all(args):
                 "log_mlflow": not args.no_mlflow,
                 "evaluate_test": args.evaluate_test,
                 "prefer_cuda": not args.cpu,
+                "auto_adjust_for_scaffold": args.auto_adjust,
             }
             if model_type == "MLP":
                 spec["mlp_descriptor_cols"] = (
@@ -206,9 +214,33 @@ def main():
     )
     p_train.add_argument(
         "--scheduler",
-        choices=["plateau", "cosine"],
+        choices=["plateau", "cosine", "warmup_cosine"],
         default="plateau",
         help="LR scheduler type",
+    )
+    p_train.add_argument(
+        "--auto-adjust",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Auto-adjust hyperparameters for scaffold split",
+    )
+    p_train.add_argument(
+        "--accumulation-steps",
+        type=int,
+        default=None,
+        help="Gradient accumulation steps (default: auto for scaffold, 1 otherwise)",
+    )
+    p_train.add_argument(
+        "--num-residual-blocks",
+        type=int,
+        default=None,
+        help="Number of residual MLP blocks (auto for scaffold)",
+    )
+    p_train.add_argument(
+        "--use-augmentation",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Enable data augmentation (default: auto for scaffold)",
     )
     p_train.set_defaults(func=cmd_train)
 
@@ -221,6 +253,12 @@ def main():
     p_all.add_argument("--use-descriptors", action="store_true")
     p_all.add_argument("--use-maccs", action="store_true")
     p_all.add_argument("--batch-norm", action="store_true")
+    p_all.add_argument(
+        "--auto-adjust",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Auto-adjust hyperparameters for scaffold split",
+    )
     p_all.set_defaults(func=cmd_train_all)
 
     # tune

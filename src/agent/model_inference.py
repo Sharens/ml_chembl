@@ -206,7 +206,10 @@ def predict_pic50(
         model, _ = loaded
 
     data = data.to(device)
+    was_training = model.training
+    model.eval()
     with torch.no_grad():
         pred = model(data).cpu().item()
+    model.train(was_training)
 
     return _success_result(canonical_smiles, round(float(pred), 4))

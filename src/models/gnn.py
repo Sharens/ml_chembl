@@ -12,6 +12,21 @@ from torch_geometric.nn import (
 from torch_geometric.nn.aggr import AttentionalAggregation
 
 
+class DropPath(nn.Module):
+    def __init__(self, drop_prob: float = 0.0):
+        super().__init__()
+        self.drop_prob = drop_prob
+
+    def forward(self, x):
+        if self.drop_prob == 0.0 or not self.training:
+            return x
+        keep_prob = 1.0 - self.drop_prob
+        shape = (x.shape[0],) + (1,) * (x.ndim - 1)
+        random_tensor = keep_prob + torch.rand(shape, dtype=x.dtype, device=x.device)
+        random_tensor.floor_()
+        return x.div(keep_prob) * random_tensor
+
+
 class GNNRegressor(nn.Module):
     def __init__(
         self,
@@ -23,6 +38,9 @@ class GNNRegressor(nn.Module):
         pooling: str = "mean",
         descriptor_dim: int = 0,
         use_jk: bool = True,
+        drop_path_rate: float = 0.0,
+        use_augmentation: bool = False,
+        augmentation_drop_edge: float = 0.05,
     ):
         super().__init__()
         if pooling not in {"mean", "add", "attention"}:
@@ -33,6 +51,13 @@ class GNNRegressor(nn.Module):
         self.descriptor_dim = descriptor_dim
         self.use_jk = use_jk
 
+        from src.models.augmentation import GraphAugmentor
+
+        self.graph_augmentor = GraphAugmentor(
+            drop_edge_prob=augmentation_drop_edge,
+            enabled=use_augmentation,
+        )
+
         self.node_proj = nn.Linear(node_features, hidden_dim)
         self.edge_encoder = nn.Sequential(
             nn.Linear(edge_features, hidden_dim),
@@ -42,7 +67,9 @@ class GNNRegressor(nn.Module):
 
         self.convs = nn.ModuleList()
         self.norms = nn.ModuleList()
-        for _ in range(num_layers):
+        self.drop_paths = nn.ModuleList()
+
+        for i in range(num_layers):
             mlp = nn.Sequential(
                 nn.Linear(hidden_dim, hidden_dim),
                 nn.ReLU(),
@@ -50,16 +77,19 @@ class GNNRegressor(nn.Module):
             )
             self.convs.append(GINEConv(mlp, edge_dim=hidden_dim))
             self.norms.append(BatchNorm(hidden_dim))
+            layer_drop_rate = drop_path_rate * (i / max(num_layers - 1, 1))
+            self.drop_paths.append(DropPath(layer_drop_rate))
 
+        pool_dim = hidden_dim * num_layers if use_jk else hidden_dim
         if self.pooling == "attention":
             gate_nn = nn.Sequential(
-                nn.Linear(hidden_dim, hidden_dim),
+                nn.Linear(pool_dim, hidden_dim),
                 nn.ReLU(),
                 nn.Linear(hidden_dim, 1),
             )
             self.attn_pool = AttentionalAggregation(gate_nn)
 
-        head_in = hidden_dim * num_layers if use_jk else hidden_dim
+        head_in = pool_dim
         if descriptor_dim > 0:
             head_in += descriptor_dim
 
@@ -84,6 +114,8 @@ class GNNRegressor(nn.Module):
         return global_mean_pool(x, batch)
 
     def forward(self, data):
+        data = self.graph_augmentor(data)
+
         x, edge_index, edge_attr, batch = (
             data.x,
             data.edge_index,
@@ -95,23 +127,23 @@ class GNNRegressor(nn.Module):
 
         if self.use_jk:
             layer_outputs = []
-            for conv, norm in zip(self.convs, self.norms):
+            for conv, norm, drop_path in zip(self.convs, self.norms, self.drop_paths):
                 residual = x
                 x = conv(x, edge_index, edge_attr)
                 x = norm(x)
                 x = F.relu(x)
                 x = F.dropout(x, p=self.dropout, training=self.training)
-                x = x + residual
+                x = residual + drop_path(x)
                 layer_outputs.append(x)
             x = torch.cat(layer_outputs, dim=-1)
         else:
-            for conv, norm in zip(self.convs, self.norms):
+            for conv, norm, drop_path in zip(self.convs, self.norms, self.drop_paths):
                 residual = x
                 x = conv(x, edge_index, edge_attr)
                 x = norm(x)
                 x = F.relu(x)
                 x = F.dropout(x, p=self.dropout, training=self.training)
-                x = x + residual
+                x = residual + drop_path(x)
 
         x = self._pool(x, batch)
 
@@ -120,3 +152,6 @@ class GNNRegressor(nn.Module):
             x = torch.cat([x, desc], dim=-1)
 
         return self.head(x)
+
+
+__all__ = ["GNNRegressor", "DropPath"]

@@ -95,7 +95,6 @@ def _tune_config_worker(args: tuple) -> dict:
         common_kwargs,
     ) = args
 
-    import torch.utils.data
     from src.models.training import compute_num_workers
 
     compute_num_workers.__defaults__ = (0,)
@@ -252,7 +251,42 @@ def train_and_score(
     mlp_hidden_sizes: list[int] | None = None,
     mlp_dropout: float = 0.2,
     scheduler_type: str = "plateau",
+    auto_adjust_for_scaffold: bool = True,
+    num_residual_blocks: int = 0,
+    use_augmentation: bool = False,
+    augmentation_drop_edge: float = 0.05,
+    drop_path_rate: float = 0.0,
+    accumulation_steps: int = 1,
 ):
+    if auto_adjust_for_scaffold and split_type == "scaffold":
+        from src.models.config import (
+            GNN_DROP_PATH_RATE,
+            SCAFFOLD_ACCUMULATION_STEPS,
+            SCAFFOLD_DROPOUT_GNN,
+            SCAFFOLD_DROPOUT_MLP,
+            SCAFFOLD_MIN_DELTA,
+            SCAFFOLD_NUM_RESIDUAL_BLOCKS,
+            SCAFFOLD_PATIENCE,
+            SCAFFOLD_WEIGHT_DECAY,
+            USE_AUGMENTATION,
+            WARMUP_EPOCHS,
+        )
+
+        if model_type == "MLP":
+            mlp_dropout = SCAFFOLD_DROPOUT_MLP
+            mlp_use_batch_norm = True
+            num_residual_blocks = SCAFFOLD_NUM_RESIDUAL_BLOCKS
+        if model_type == "GNN":
+            gnn_dropout = SCAFFOLD_DROPOUT_GNN
+            drop_path_rate = GNN_DROP_PATH_RATE
+        weight_decay = SCAFFOLD_WEIGHT_DECAY
+        early_stopping_patience = SCAFFOLD_PATIENCE
+        min_delta = SCAFFOLD_MIN_DELTA
+        accumulation_steps = SCAFFOLD_ACCUMULATION_STEPS
+        use_augmentation = USE_AUGMENTATION
+        if scheduler_type == "plateau":
+            scheduler_type = "warmup_cosine"
+
     seed_everything(seed, deterministic=deterministic)
     device = get_device(prefer_cuda=prefer_cuda)
     amp_enabled = bool(use_amp and device.type == "cuda")
@@ -281,6 +315,8 @@ def train_and_score(
             use_batch_norm=mlp_use_batch_norm,
             hidden_sizes=mlp_hidden_sizes,
             dropout=mlp_dropout,
+            num_residual_blocks=num_residual_blocks,
+            use_augmentation=use_augmentation,
         ).to(device)
         is_gnn_flag = False
     elif model_type == "GNN":
@@ -304,6 +340,9 @@ def train_and_score(
             pooling=pooling,
             descriptor_dim=descriptor_dim,
             use_jk=True,
+            drop_path_rate=drop_path_rate,
+            use_augmentation=use_augmentation,
+            augmentation_drop_edge=augmentation_drop_edge,
         ).to(device)
         is_gnn_flag = True
     else:
@@ -433,7 +472,17 @@ def train_and_score(
             print(f"Model cache load failed ({exc}); training from scratch...")
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
-    if scheduler_type == "cosine":
+    if scheduler_type == "warmup_cosine":
+        from src.models.config import WARMUP_EPOCHS
+        from src.models.training import WarmupCosineScheduler
+
+        scheduler = WarmupCosineScheduler(
+            optimizer,
+            warmup_epochs=WARMUP_EPOCHS,
+            total_epochs=epochs,
+            base_lr=lr,
+        )
+    elif scheduler_type == "cosine":
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
             optimizer, T_max=epochs, eta_min=1e-6
         )
@@ -457,17 +506,33 @@ def train_and_score(
     no_improve_epochs = 0
 
     for epoch in range(epochs):
-        epoch_train_loss = train_one_epoch(
-            model,
-            train_loader,
-            optimizer,
-            criterion,
-            device,
-            is_gnn=is_gnn_flag,
-            clip_grad=1.0,
-            scaler=scaler,
-            use_amp=amp_enabled,
-        )
+        if accumulation_steps > 1:
+            from src.models.training import train_one_epoch_with_accumulation
+
+            epoch_train_loss = train_one_epoch_with_accumulation(
+                model,
+                train_loader,
+                optimizer,
+                criterion,
+                device,
+                is_gnn=is_gnn_flag,
+                clip_grad=1.0,
+                scaler=scaler,
+                use_amp=amp_enabled,
+                accumulation_steps=accumulation_steps,
+            )
+        else:
+            epoch_train_loss = train_one_epoch(
+                model,
+                train_loader,
+                optimizer,
+                criterion,
+                device,
+                is_gnn=is_gnn_flag,
+                clip_grad=1.0,
+                scaler=scaler,
+                use_amp=amp_enabled,
+            )
         epoch_val_loss = evaluate_loss(
             model,
             val_loader,
@@ -486,7 +551,7 @@ def train_and_score(
         val_r2_history.append(epoch_val_r2)
         lr_history.append(current_lr)
 
-        if scheduler_type == "cosine":
+        if scheduler_type in ("cosine", "warmup_cosine"):
             scheduler.step()
         else:
             scheduler.step(epoch_val_loss)

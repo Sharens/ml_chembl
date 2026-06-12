@@ -146,3 +146,112 @@ def evaluate_all_metrics(model, loader, device, is_gnn=False, use_amp=False):
         "rmse": float(np.sqrt(mean_squared_error(targets, preds))),
         "mae": float(mean_absolute_error(targets, preds)),
     }
+
+
+class WarmupCosineScheduler:
+    def __init__(
+        self,
+        optimizer: torch.optim.Optimizer,
+        warmup_epochs: int,
+        total_epochs: int,
+        base_lr: float,
+        min_lr: float = 1e-6,
+        warmup_start_lr: float = 1e-7,
+    ):
+        self.optimizer = optimizer
+        self.warmup_epochs = warmup_epochs
+        self.total_epochs = total_epochs
+        self.base_lr = base_lr
+        self.min_lr = min_lr
+        self.warmup_start_lr = warmup_start_lr
+        self.current_epoch = 0
+
+    def step(self, epoch=None):
+        if epoch is not None:
+            self.current_epoch = epoch
+        else:
+            self.current_epoch += 1
+
+        if self.current_epoch < self.warmup_epochs:
+            progress = self.current_epoch / max(self.warmup_epochs, 1)
+            lr = self.warmup_start_lr + (self.base_lr - self.warmup_start_lr) * progress
+        else:
+            progress = (self.current_epoch - self.warmup_epochs) / max(
+                self.total_epochs - self.warmup_epochs, 1
+            )
+            lr = self.min_lr + (self.base_lr - self.min_lr) * 0.5 * (
+                1.0 + np.cos(np.pi * progress)
+            )
+
+        for param_group in self.optimizer.param_groups:
+            param_group["lr"] = lr
+        return lr
+
+
+def train_one_epoch_with_accumulation(
+    model,
+    loader,
+    optimizer,
+    criterion,
+    device,
+    is_gnn=False,
+    clip_grad=1.0,
+    scaler=None,
+    use_amp=False,
+    accumulation_steps=1,
+):
+    model.train()
+    total_loss = 0.0
+    optimizer.zero_grad(set_to_none=True)
+
+    for batch_idx, batch in enumerate(loader):
+        with torch.amp.autocast(device_type=device.type, enabled=use_amp):
+            out, target = _forward_batch(model, batch, device, is_gnn=is_gnn)
+            loss = criterion(out.squeeze(-1), target.float())
+            loss = loss / accumulation_steps
+
+        if torch.isnan(loss):
+            print("Loss exploded to NaN! Stopping...")
+            return float("nan")
+
+        if scaler is not None:
+            scaler.scale(loss).backward()
+        else:
+            loss.backward()
+
+        if (batch_idx + 1) % accumulation_steps == 0 or (batch_idx + 1) == len(loader):
+            if scaler is not None:
+                if clip_grad is not None:
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(
+                        model.parameters(), max_norm=clip_grad
+                    )
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                if clip_grad is not None:
+                    torch.nn.utils.clip_grad_norm_(
+                        model.parameters(), max_norm=clip_grad
+                    )
+                optimizer.step()
+            optimizer.zero_grad(set_to_none=True)
+
+        total_loss += loss.item() * accumulation_steps
+
+    return total_loss / len(loader)
+
+
+__all__ = [
+    "seed_everything",
+    "get_device",
+    "compute_num_workers",
+    "train_one_epoch",
+    "train_one_epoch_with_accumulation",
+    "evaluate_loss",
+    "predict_arrays",
+    "evaluate_r2",
+    "evaluate_rmse",
+    "evaluate_mae",
+    "evaluate_all_metrics",
+    "WarmupCosineScheduler",
+]
