@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import (
@@ -12,13 +13,6 @@ from torch_geometric.nn.aggr import AttentionalAggregation
 
 
 class GNNRegressor(nn.Module):
-    """Graph Neural Network for pIC50 regression using GINEConv message passing.
-
-    Edge attributes (bond type, stereo, conjugated, in-ring) are fully propagated
-    through GINEConv layers via the edge_dim parameter, giving the model access
-    to rich bond-level information during message passing.
-    """
-
     def __init__(
         self,
         node_features: int,
@@ -27,6 +21,8 @@ class GNNRegressor(nn.Module):
         num_layers: int = 4,
         dropout: float = 0.15,
         pooling: str = "mean",
+        descriptor_dim: int = 0,
+        use_jk: bool = True,
     ):
         super().__init__()
         if pooling not in {"mean", "add", "attention"}:
@@ -34,6 +30,9 @@ class GNNRegressor(nn.Module):
 
         self.pooling = pooling
         self.dropout = dropout
+        self.descriptor_dim = descriptor_dim
+        self.use_jk = use_jk
+
         self.node_proj = nn.Linear(node_features, hidden_dim)
         self.edge_encoder = nn.Sequential(
             nn.Linear(edge_features, hidden_dim),
@@ -60,11 +59,21 @@ class GNNRegressor(nn.Module):
             )
             self.attn_pool = AttentionalAggregation(gate_nn)
 
+        head_in = hidden_dim * num_layers if use_jk else hidden_dim
+        if descriptor_dim > 0:
+            head_in += descriptor_dim
+
+        h = max(head_in // 2, 64)
+        h2 = max(h // 2, 16)
         self.head = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.Linear(head_in, h),
+            nn.BatchNorm1d(h),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(hidden_dim // 2, 1),
+            nn.Linear(h, h2),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(h2, 1),
         )
 
     def _pool(self, x, batch):
@@ -84,13 +93,30 @@ class GNNRegressor(nn.Module):
         x = self.node_proj(x)
         edge_attr = self.edge_encoder(edge_attr)
 
-        for conv, norm in zip(self.convs, self.norms):
-            residual = x
-            x = conv(x, edge_index, edge_attr)
-            x = norm(x)
-            x = F.relu(x)
-            x = F.dropout(x, p=self.dropout, training=self.training)
-            x = x + residual
+        if self.use_jk:
+            layer_outputs = []
+            for conv, norm in zip(self.convs, self.norms):
+                residual = x
+                x = conv(x, edge_index, edge_attr)
+                x = norm(x)
+                x = F.relu(x)
+                x = F.dropout(x, p=self.dropout, training=self.training)
+                x = x + residual
+                layer_outputs.append(x)
+            x = torch.cat(layer_outputs, dim=-1)
+        else:
+            for conv, norm in zip(self.convs, self.norms):
+                residual = x
+                x = conv(x, edge_index, edge_attr)
+                x = norm(x)
+                x = F.relu(x)
+                x = F.dropout(x, p=self.dropout, training=self.training)
+                x = x + residual
 
         x = self._pool(x, batch)
+
+        if self.descriptor_dim > 0 and hasattr(data, "desc"):
+            desc = data.desc
+            x = torch.cat([x, desc], dim=-1)
+
         return self.head(x)

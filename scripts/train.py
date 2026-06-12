@@ -68,6 +68,9 @@ def cmd_train(args):
         "mlp_descriptor_cols": _DESC_COLS if args.use_descriptors else None,
         "mlp_use_maccs": args.use_maccs,
         "mlp_use_batch_norm": args.batch_norm,
+        "mlp_hidden_sizes": args.mlp_hidden_sizes,
+        "mlp_dropout": args.mlp_dropout,
+        "scheduler_type": args.scheduler,
     }
     result = train_and_score(**spec)
     print(f"\nResult: R²={result['r2_val']:.4f}  RMSE={result['rmse_val']:.4f}")
@@ -190,6 +193,22 @@ def main():
     )
     p_train.add_argument(
         "--batch-norm", action="store_true", help="Use BatchNorm in MLP"
+    )
+    p_train.add_argument(
+        "--mlp-hidden-sizes",
+        type=int,
+        nargs="+",
+        default=None,
+        help="Hidden layer sizes for MLP (e.g. 1024 512 256)",
+    )
+    p_train.add_argument(
+        "--mlp-dropout", type=float, default=0.2, help="Dropout rate for MLP"
+    )
+    p_train.add_argument(
+        "--scheduler",
+        choices=["plateau", "cosine"],
+        default="plateau",
+        help="LR scheduler type",
     )
     p_train.set_defaults(func=cmd_train)
 

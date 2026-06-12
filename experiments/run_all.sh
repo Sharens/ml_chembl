@@ -17,7 +17,7 @@ step() {
     local n="$1"; shift
     local desc="$*"
     echo ""
-    echo "━━━ [$n/6] $desc ━━━"
+    echo "━━━ [$n/8] $desc ━━━"
     echo ""
 }
 
@@ -58,9 +58,28 @@ for model in MLP GNN; do
 done
 
 # ------------------------------------------------------------------
-# Krok 5: Modele per-target (opcjonalne)
+# Krok 5: MLP enhanced + glebsza architektura + CosineAnnealing
 # ------------------------------------------------------------------
-step 5 "Modele per-target (EGFR + p38a)"
+step 5 "MLP enhanced deep (1024-512-256) + CosineAnnealing"
+for seed in 42 123 7 99; do
+    uv run python scripts/train.py train --model MLP --split scaffold --epochs 200 \
+        --seed "$seed" --use-descriptors --use-maccs --batch-norm \
+        --mlp-hidden-sizes 1024 512 256 --scheduler cosine
+done
+
+# ------------------------------------------------------------------
+# Krok 6: GNN z deskryptorami + JumpingKnowledge
+# ------------------------------------------------------------------
+step 6 "GNN z deskryptorami + JumpingKnowledge"
+for seed in 42 123; do
+    uv run python scripts/train.py train --model GNN --split scaffold --epochs 200 \
+        --seed "$seed" --use-descriptors
+done
+
+# ------------------------------------------------------------------
+# Krok 7: Modele per-target (opcjonalne)
+# ------------------------------------------------------------------
+step 7 "Modele per-target (EGFR + p38a)"
 if [ -f "$SCRIPT_DIR/per_target.yaml" ]; then
     uv run python scripts/train.py campaign "$SCRIPT_DIR/per_target.yaml"
 else
@@ -69,9 +88,9 @@ else
 fi
 
 # ------------------------------------------------------------------
-# Krok 6: Tuning GNN z Optuna
+# Krok 8: Tuning GNN z Optuna
 # ------------------------------------------------------------------
-step 6 "Tuning GNN scaffold z Optuna (50 triali, wznawialny)"
+step 8 "Tuning GNN scaffold z Optuna (50 triali, wznawialny)"
 uv run python scripts/train.py tune \
     --split scaffold --n-trials 50 --seeds 42 123 --epochs 200
 

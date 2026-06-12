@@ -249,6 +249,9 @@ def train_and_score(
     mlp_descriptor_cols: list[str] | None = None,
     mlp_use_maccs: bool = False,
     mlp_use_batch_norm: bool = False,
+    mlp_hidden_sizes: list[int] | None = None,
+    mlp_dropout: float = 0.2,
+    scheduler_type: str = "plateau",
 ):
     seed_everything(seed, deterministic=deterministic)
     device = get_device(prefer_cuda=prefer_cuda)
@@ -274,14 +277,24 @@ def train_and_score(
         sample = next(iter(train_loader))[0]
         input_size = sample.shape[1]
         model = MLPBaseline(
-            input_size=input_size, use_batch_norm=mlp_use_batch_norm
+            input_size=input_size,
+            use_batch_norm=mlp_use_batch_norm,
+            hidden_sizes=mlp_hidden_sizes,
+            dropout=mlp_dropout,
         ).to(device)
         is_gnn_flag = False
     elif model_type == "GNN":
         train_loader, val_loader, test_loader = build_gnn_loaders(
-            df_fp, split_type=split_type, batch_size=batch_size, seed=seed
+            df_fp,
+            split_type=split_type,
+            batch_size=batch_size,
+            seed=seed,
+            descriptor_cols=mlp_descriptor_cols,
         )
         sample_graph = train_loader.dataset[0]
+        descriptor_dim = (
+            len(mlp_descriptor_cols) if mlp_descriptor_cols is not None else 0
+        )
         model = GNNRegressor(
             node_features=sample_graph.num_node_features,
             edge_features=sample_graph.edge_attr.shape[1],
@@ -289,6 +302,8 @@ def train_and_score(
             num_layers=gnn_num_layers,
             dropout=gnn_dropout,
             pooling=pooling,
+            descriptor_dim=descriptor_dim,
+            use_jk=True,
         ).to(device)
         is_gnn_flag = True
     else:
@@ -312,6 +327,13 @@ def train_and_score(
         "mlp_descriptor_cols": mlp_descriptor_cols,
         "mlp_use_maccs": mlp_use_maccs,
         "mlp_use_batch_norm": mlp_use_batch_norm,
+        "mlp_hidden_sizes": mlp_hidden_sizes,
+        "mlp_dropout": mlp_dropout,
+        "scheduler_type": scheduler_type,
+        "gnn_descriptor_dim": len(mlp_descriptor_cols)
+        if mlp_descriptor_cols is not None
+        else 0,
+        "gnn_use_jk": True,
     }
     model_cache_path = get_model_cache_path(cache_config, namespace=cache_namespace)
 
@@ -411,13 +433,18 @@ def train_and_score(
             print(f"Model cache load failed ({exc}); training from scratch...")
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=weight_decay)
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer,
-        mode="min",
-        factor=0.5,
-        patience=6,
-        min_lr=1e-6,
-    )
+    if scheduler_type == "cosine":
+        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer, T_max=epochs, eta_min=1e-6
+        )
+    else:
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode="min",
+            factor=0.5,
+            patience=6,
+            min_lr=1e-6,
+        )
     criterion = _get_loss_fn(loss_fn)
 
     train_losses = []
@@ -459,7 +486,10 @@ def train_and_score(
         val_r2_history.append(epoch_val_r2)
         lr_history.append(current_lr)
 
-        scheduler.step(epoch_val_loss)
+        if scheduler_type == "cosine":
+            scheduler.step()
+        else:
+            scheduler.step(epoch_val_loss)
 
         if epoch_val_loss < (best_val_loss - min_delta):
             best_val_loss = epoch_val_loss
@@ -551,6 +581,12 @@ def train_and_score(
         "gnn_num_layers": gnn_num_layers,
         "gnn_dropout": gnn_dropout,
         "loss_fn": loss_fn,
+        "mlp_descriptor_cols": mlp_descriptor_cols,
+        "mlp_use_maccs": mlp_use_maccs,
+        "mlp_use_batch_norm": mlp_use_batch_norm,
+        "mlp_hidden_sizes": mlp_hidden_sizes,
+        "mlp_dropout": mlp_dropout,
+        "scheduler_type": scheduler_type,
         "avg_train_loss": avg_train_loss,
         "avg_val_loss": avg_val_loss,
         "best_val_loss": float(best_val_loss),

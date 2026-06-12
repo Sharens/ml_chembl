@@ -470,6 +470,32 @@ def load_or_build_graph_cache(df_fp: pl.DataFrame):
     return graphs, smiles_to_idx
 
 
+def _add_descriptors_to_graphs(
+    graphs: list[Data],
+    df_part: pl.DataFrame,
+    smiles_to_idx: dict,
+    descriptor_cols: list[str] | None = None,
+    desc_mean: np.ndarray | None = None,
+    desc_std: np.ndarray | None = None,
+):
+    if not descriptor_cols:
+        return
+    for row in df_part.select(["canonical_smiles"] + descriptor_cols).iter_rows(
+        named=True
+    ):
+        smiles = row.pop("canonical_smiles")
+        idx = smiles_to_idx.get(smiles)
+        if idx is None:
+            continue
+        vals = np.array(list(row.values()), dtype=np.float32)
+        if desc_mean is not None and desc_std is not None:
+            vals = np.where(np.isnan(vals), desc_mean, vals)
+            vals = (vals - desc_mean) / desc_std
+        else:
+            vals = np.nan_to_num(vals)
+        graphs[idx].desc = torch.tensor(vals, dtype=torch.float)
+
+
 def _subset_graphs(df_part: pl.DataFrame, all_graphs, smiles_to_idx):
     graphs = []
     for smiles, target in df_part.select(["canonical_smiles", "pIC50"]).iter_rows():
@@ -482,11 +508,36 @@ def _subset_graphs(df_part: pl.DataFrame, all_graphs, smiles_to_idx):
     return graphs
 
 
-def build_gnn_loaders(df_fp: pl.DataFrame, split_type="random", batch_size=64, seed=42):
+def build_gnn_loaders(
+    df_fp: pl.DataFrame,
+    split_type="random",
+    batch_size=64,
+    seed=42,
+    descriptor_cols: list[str] | None = None,
+):
     device = get_device()
     train_df, val_df, test_df = get_split_dfs(df_fp, split_type=split_type, seed=seed)
 
     all_graphs, smiles_to_idx = load_or_build_graph_cache(df_fp)
+
+    # Precompute descriptor normalization on training set
+    desc_mean: np.ndarray | None = None
+    desc_std: np.ndarray | None = None
+    if descriptor_cols:
+        desc_train = train_df.select(descriptor_cols).to_numpy().astype(np.float32)
+        desc_mean = np.nanmean(desc_train, axis=0, keepdims=True)
+        desc_std = np.nanstd(desc_train, axis=0, keepdims=True)
+        desc_std[desc_std == 0] = 1.0
+        # Add descriptors to all cached graphs
+        _add_descriptors_to_graphs(
+            all_graphs, train_df, smiles_to_idx, descriptor_cols, desc_mean, desc_std
+        )
+        _add_descriptors_to_graphs(
+            all_graphs, val_df, smiles_to_idx, descriptor_cols, desc_mean, desc_std
+        )
+        _add_descriptors_to_graphs(
+            all_graphs, test_df, smiles_to_idx, descriptor_cols, desc_mean, desc_std
+        )
 
     train_graphs = _subset_graphs(train_df, all_graphs, smiles_to_idx)
     val_graphs = _subset_graphs(val_df, all_graphs, smiles_to_idx)
