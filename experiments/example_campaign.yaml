@@ -1,0 +1,77 @@
+train:
+  # MLP baseline
+  - model_type: MLP
+    split_type: random
+    epochs: 200
+    seed: 42
+    log_mlflow: true
+    evaluate_test: false
+
+  - model_type: MLP
+    split_type: scaffold
+    epochs: 200
+    seed: 42
+    log_mlflow: true
+    evaluate_test: false
+
+  # MLP z deskryptorami + MACCS
+  - model_type: MLP
+    split_type: random
+    epochs: 200
+    seed: 42
+    log_mlflow: true
+    mlp_descriptor_cols:
+      - mw_freebase
+      - alogp
+      - hba
+      - hbd
+      - psa
+      - rtb
+      - aromatic_rings
+      - qed_weighted
+    mlp_use_maccs: true
+    mlp_use_batch_norm: true
+
+  # GNN baseline
+  - model_type: GNN
+    split_type: random
+    epochs: 200
+    seed: 42
+    log_mlflow: true
+
+  - model_type: GNN
+    split_type: scaffold
+    epochs: 200
+    seed: 42
+    log_mlflow: true
+
+tune:
+  - split: scaffold
+    n_trials: 50
+    seeds: [42, 123]
+    epochs: 200
+    search_space:
+      lr:
+        type: float
+        low: 0.00005
+        high: 0.001
+        log: true
+      weight_decay:
+        type: categorical
+        values: [1e-5, 5e-5, 1e-4]
+      pooling:
+        type: categorical
+        values: [mean, add, attention]
+      gnn_hidden_dim:
+        type: int
+        low: 96
+        high: 384
+        step: 32
+      gnn_num_layers:
+        type: int
+        low: 2
+        high: 6
+      gnn_dropout:
+        type: float
+        low: 0.0
+        high: 0.4

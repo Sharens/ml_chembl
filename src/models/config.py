@@ -16,6 +16,19 @@ LOSS_FN_DEFAULT = "huber"
 MFP_RADIUS = 2
 MFP_N_BITS = 2048
 
+MLP_USE_BATCHNORM = False
+MLP_DESCRIPTOR_COLS = [
+    "mw_freebase",
+    "alogp",
+    "hba",
+    "hbd",
+    "psa",
+    "rtb",
+    "aromatic_rings",
+    "qed_weighted",
+]
+MLP_USE_MACCS = False
+
 ATOMIC_NUM_LIST = [1, 5, 6, 7, 8, 9, 14, 15, 16, 17, 34, 35, 53]
 
 HYBRIDIZATION_TYPES = [

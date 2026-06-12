@@ -6,7 +6,7 @@ import numpy as np
 import polars as pl
 import torch
 from rdkit import Chem, RDLogger
-from rdkit.Chem import rdFingerprintGenerator
+from rdkit.Chem import MACCSkeys, rdFingerprintGenerator
 from rdkit.Chem.Scaffolds import MurckoScaffold
 from torch.utils.data import DataLoader, TensorDataset
 from torch_geometric.data import Data
@@ -28,7 +28,7 @@ from src.models.training import compute_num_workers, get_device
 RDLogger.logger().setLevel(RDLogger.ERROR)
 
 # ---------------------------------------------------------------------------
-# Morgan fingerprint generator (inicjalizowany raz na poziomie modulu)
+# Fingerprint generators (inicjalizowane raz na poziomie modulu)
 # ---------------------------------------------------------------------------
 _mfpgen = rdFingerprintGenerator.GetMorganGenerator(
     radius=MFP_RADIUS, fpSize=MFP_N_BITS
@@ -41,6 +41,20 @@ def fp_from_smiles(smiles: str) -> np.ndarray | None:
         return None
     try:
         return _mfpgen.GetFingerprintAsNumPy(mol).astype(np.float32)
+    except Exception:
+        return None
+
+
+def maccs_fp_from_smiles(smiles: str) -> np.ndarray | None:
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        return None
+    try:
+        fp = MACCSkeys.GenMACCSKeys(mol)
+        arr = np.zeros((167,), dtype=np.float32)
+        for idx in fp.GetOnBits():
+            arr[idx] = 1.0
+        return arr
     except Exception:
         return None
 
@@ -206,15 +220,86 @@ def family_split(
 # ---------------------------------------------------------------------------
 
 
-def build_mlp_loaders(df_fp: pl.DataFrame, split_type="random", batch_size=64, seed=42):
+def _build_mlp_features(
+    df: pl.DataFrame,
+    descriptor_cols: list[str] | None = None,
+    use_maccs: bool = False,
+    desc_mean: np.ndarray | None = None,
+    desc_std: np.ndarray | None = None,
+) -> np.ndarray:
+    parts = [np.stack(df["fp"].to_list()).astype(np.float32)]
+
+    if use_maccs:
+        maccs = df["canonical_smiles"].map_elements(
+            maccs_fp_from_smiles, return_dtype=pl.Object
+        )
+        maccs_np = np.stack(
+            [
+                np.zeros(167, dtype=np.float32) if fp is None else fp
+                for fp in maccs.to_list()
+            ]
+        )
+        parts.append(maccs_np)
+
+    if descriptor_cols:
+        desc = df.select(descriptor_cols).to_numpy().astype(np.float32)
+        if desc_mean is not None and desc_std is not None:
+            desc = np.where(np.isnan(desc), desc_mean, desc)
+            desc = (desc - desc_mean) / desc_std
+        else:
+            mean = np.nanmean(desc, axis=0, keepdims=True)
+            std = np.nanstd(desc, axis=0, keepdims=True)
+            std[std == 0] = 1.0
+            desc = np.where(np.isnan(desc), mean, desc)
+            desc = (desc - mean) / std
+        parts.append(desc)
+
+    return np.concatenate(parts, axis=1)
+
+
+def build_mlp_loaders(
+    df_fp: pl.DataFrame,
+    split_type="random",
+    batch_size=64,
+    seed=42,
+    descriptor_cols: list[str] | None = None,
+    use_maccs: bool = False,
+):
     device = get_device()
     train_df, val_df, test_df = get_split_dfs(df_fp, split_type=split_type, seed=seed)
 
-    X_train = np.stack(train_df["fp"].to_list()).astype(np.float32)
+    # Precompute normalizacje deskryptorow na zbiorze treningowym
+    desc_mean: np.ndarray | None = None
+    desc_std: np.ndarray | None = None
+    if descriptor_cols:
+        desc_train = train_df.select(descriptor_cols).to_numpy().astype(np.float32)
+        desc_mean = np.nanmean(desc_train, axis=0, keepdims=True)
+        desc_std = np.nanstd(desc_train, axis=0, keepdims=True)
+        desc_std[desc_std == 0] = 1.0
+
+    X_train = _build_mlp_features(
+        train_df,
+        descriptor_cols=descriptor_cols,
+        use_maccs=use_maccs,
+        desc_mean=desc_mean,
+        desc_std=desc_std,
+    )
     y_train = np.array(train_df["pIC50"].to_list(), dtype=np.float32)
-    X_val = np.stack(val_df["fp"].to_list()).astype(np.float32)
+    X_val = _build_mlp_features(
+        val_df,
+        descriptor_cols=descriptor_cols,
+        use_maccs=use_maccs,
+        desc_mean=desc_mean,
+        desc_std=desc_std,
+    )
     y_val = np.array(val_df["pIC50"].to_list(), dtype=np.float32)
-    X_test = np.stack(test_df["fp"].to_list()).astype(np.float32)
+    X_test = _build_mlp_features(
+        test_df,
+        descriptor_cols=descriptor_cols,
+        use_maccs=use_maccs,
+        desc_mean=desc_mean,
+        desc_std=desc_std,
+    )
     y_test = np.array(test_df["pIC50"].to_list(), dtype=np.float32)
 
     num_workers = compute_num_workers()

@@ -1429,11 +1429,13 @@ dependencies = [
     { name = "mlflow" },
     { name = "numpy" },
     { name = "ollama" },
+    { name = "optuna" },
     { name = "pandas" },
     { name = "path" },
     { name = "polars" },
     { name = "pyarrow" },
     { name = "pyspark" },
+    { name = "pyyaml" },
     { name = "rdkit" },
     { name = "scikit-learn" },
     { name = "seaborn" },
@@ -1471,6 +1473,7 @@ requires-dist = [
     { name = "mlflow" },
     { name = "numpy", specifier = "==2.4.2" },
     { name = "ollama", specifier = ">=0.6.2" },
+    { name = "optuna", specifier = ">=4.9.0" },
     { name = "pandas", specifier = ">=2.3.3" },
     { name = "path" },
     { name = "polars", specifier = "==1.35.2" },
@@ -1479,6 +1482,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8" },
     { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=5" },
     { name = "pytest-mock", marker = "extra == 'dev'", specifier = ">=3" },
+    { name = "pyyaml", specifier = ">=6.0.3" },
     { name = "rdkit", specifier = "==2025.9.2" },
     { name = "ruff", marker = "extra == 'dev'" },
     { name = "scikit-learn" },
@@ -1950,6 +1954,24 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/6d/c0/4ae7973f3c2cfd2b6e321f1675626f0dab0a97027cc7a297474c9c8f3d04/opentelemetry_semantic_conventions-0.61b0.tar.gz", hash = "sha256:072f65473c5d7c6dc0355b27d6c9d1a679d63b6d4b4b16a9773062cb7e31192a", size = 145755, upload-time = "2026-03-04T14:17:32.664Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b2/37/cc6a55e448deaa9b27377d087da8615a3416d8ad523d5960b78dbeadd02a/opentelemetry_semantic_conventions-0.61b0-py3-none-any.whl", hash = "sha256:fa530a96be229795f8cef353739b618148b0fe2b4b3f005e60e262926c4d38e2", size = 231621, upload-time = "2026-03-04T14:17:19.33Z" },
+]
+
+[[package]]
+name = "optuna"
+version = "4.9.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "alembic" },
+    { name = "colorlog" },
+    { name = "numpy" },
+    { name = "packaging" },
+    { name = "pyyaml" },
+    { name = "sqlalchemy" },
+    { name = "tqdm" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/f4/aa/05f5e3f662cc96a4c478fc3446b8ed6359825a2b504ecb614a9ac84e4a4d/optuna-4.9.0.tar.gz", hash = "sha256:b322e5cbdf1655fb84c37646c4a7a1f391de1b47806bbe222e015825d0a82b87", size = 485834, upload-time = "2026-06-01T06:23:30.424Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ab/f3/e5fcd5d9b15771ed6dc10e3a7eeddc672e418f4f4c4653d216cc1d857e2d/optuna-4.9.0-py3-none-any.whl", hash = "sha256:f52f3be6148654850c92a5860d398fd88ec6b2c84ab68d9c3d07dcff02e7afee", size = 425553, upload-time = "2026-06-01T06:23:28.804Z" },
 ]
 
 [[package]]

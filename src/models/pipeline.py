@@ -246,6 +246,9 @@ def train_and_score(
     mlflow_tracking_uri: str = "sqlite:///mlflow.db",
     mlflow_experiment_name: str = "ml_chembl_baselines",
     mlflow_artifact_root: str = "mlruns",
+    mlp_descriptor_cols: list[str] | None = None,
+    mlp_use_maccs: bool = False,
+    mlp_use_batch_norm: bool = False,
 ):
     seed_everything(seed, deterministic=deterministic)
     device = get_device(prefer_cuda=prefer_cuda)
@@ -261,9 +264,18 @@ def train_and_score(
 
     if model_type == "MLP":
         train_loader, val_loader, test_loader = build_mlp_loaders(
-            df_fp, split_type=split_type, batch_size=batch_size, seed=seed
+            df_fp,
+            split_type=split_type,
+            batch_size=batch_size,
+            seed=seed,
+            descriptor_cols=mlp_descriptor_cols,
+            use_maccs=mlp_use_maccs,
         )
-        model = MLPBaseline().to(device)
+        sample = next(iter(train_loader))[0]
+        input_size = sample.shape[1]
+        model = MLPBaseline(
+            input_size=input_size, use_batch_norm=mlp_use_batch_norm
+        ).to(device)
         is_gnn_flag = False
     elif model_type == "GNN":
         train_loader, val_loader, test_loader = build_gnn_loaders(
@@ -297,6 +309,9 @@ def train_and_score(
         "gnn_num_layers": gnn_num_layers,
         "gnn_dropout": gnn_dropout,
         "loss_fn": loss_fn,
+        "mlp_descriptor_cols": mlp_descriptor_cols,
+        "mlp_use_maccs": mlp_use_maccs,
+        "mlp_use_batch_norm": mlp_use_batch_norm,
     }
     model_cache_path = get_model_cache_path(cache_config, namespace=cache_namespace)
 
@@ -718,7 +733,7 @@ def _log_to_mlflow(
                 )
             ]
             log_epoch_metrics(epoch_history)
-            mlflow.pytorch.log_model(model, "model")
+            mlflow.pytorch.log_model(model, name="model")
 
 
 def _log_cached_metrics(
